@@ -47,45 +47,30 @@ _cluster_region[cluster_name] := region if {
 # Global app identifier: namespace + app_label value
 _global_app_id(namespace, app_name) := sprintf("%s/%s", [namespace, app_name])
 
-# Global apps: app_id → set of AZs where the app has running pods across ALL clusters
-_global_app_azs[app_id] := azs if {
-	some cluster_name, cluster in _clusters
-	pods := object.get(object.get(cluster, "resources", {}), "pods", [])
-	some pod in pods
-	app_name := object.get(object.get(pod.metadata, "labels", {}), _app_label, "")
+# Index: app_id → set of {cluster_name, node_name} for every pod with a resolved AZ.
+# Built in a single pass — all other global aggregations derive from this index.
+_app_placements[app_id] contains {"cluster": cn, "node": node_name} if {
+	some cn, c in _clusters
+	some p in object.get(object.get(c, "resources", {}), "pods", [])
+	app_name := object.get(object.get(p.metadata, "labels", {}), _app_label, "")
 	app_name != ""
-	namespace := object.get(object.get(pod, "metadata", {}), "namespace", "default")
+	namespace := object.get(object.get(p, "metadata", {}), "namespace", "default")
 	app_id := _global_app_id(namespace, app_name)
-	azs := {az |
-		some cn, c in _clusters
-		some p in object.get(object.get(c, "resources", {}), "pods", [])
-		object.get(object.get(p.metadata, "labels", {}), _app_label, "") == app_name
-		object.get(object.get(p, "metadata", {}), "namespace", "default") == namespace
-		node_name := object.get(object.get(p, "spec", {}), "nodeName", "")
-		node_name != ""
-		az := _node_az[cn][node_name]
-	}
+	node_name := object.get(object.get(p, "spec", {}), "nodeName", "")
+	node_name != ""
+	_ = _node_az[cn][node_name]
 }
 
-# Global apps: app_id → set of regions where the app has running pods across ALL clusters
+# Global apps: app_id → set of AZs (derived from index)
+_global_app_azs[app_id] := azs if {
+	some app_id, placements in _app_placements
+	azs := {az | some pl in placements; az := _node_az[pl.cluster][pl.node]}
+}
+
+# Global apps: app_id → set of regions (derived from index)
 _global_app_regions[app_id] := regions if {
-	some cluster_name, cluster in _clusters
-	pods := object.get(object.get(cluster, "resources", {}), "pods", [])
-	some pod in pods
-	app_name := object.get(object.get(pod.metadata, "labels", {}), _app_label, "")
-	app_name != ""
-	namespace := object.get(object.get(pod, "metadata", {}), "namespace", "default")
-	app_id := _global_app_id(namespace, app_name)
-	regions := {region |
-		some cn, c in _clusters
-		some p in object.get(object.get(c, "resources", {}), "pods", [])
-		object.get(object.get(p.metadata, "labels", {}), _app_label, "") == app_name
-		object.get(object.get(p, "metadata", {}), "namespace", "default") == namespace
-		node_name := object.get(object.get(p, "spec", {}), "nodeName", "")
-		node_name != ""
-		_ = _node_az[cn][node_name]
-		region := _cluster_region[cn]
-	}
+	some app_id, placements in _app_placements
+	regions := {region | some pl in placements; region := _cluster_region[pl.cluster]}
 }
 
 # Per-cluster app tracking for pod-level violations
