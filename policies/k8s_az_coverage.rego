@@ -215,8 +215,8 @@ _failed_apps := _failed_apps_expected_azs | _failed_apps_expected_regions | _fai
 # Build detailed failure list
 _failure_details := concat("\n", [msg |
 	some app_id in _failed_apps
-	azs := object.get(_global_app_azs, app_id, set())
-	regions := object.get(_global_app_regions, app_id, set())
+	azs := object.get(_global_app_azs, app_id, {})
+	regions := object.get(_global_app_regions, app_id, {})
 	missing_azs := [az | some az in _expected_azs; not az in azs]
 	missing_regions := [r | some r in _expected_regions; not r in regions]
 	az_parts := [s | count(missing_azs) > 0; s := sprintf("missing required AZs: %s", [concat(", ", missing_azs)])]
