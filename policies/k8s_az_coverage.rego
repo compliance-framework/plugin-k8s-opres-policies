@@ -125,7 +125,7 @@ violation[{"remarks": msg}] if {
 	_min_azs > 0
 	some app_id, azs in _global_app_azs
 	count(azs) < _min_azs
-	msg := sprintf("App %q spans only %d AZ(s) across all clusters, minimum required is %d", [app_id, count(azs), _min_azs])
+	msg := sprintf("App %q spans only %d AZ(s) across all clusters (covered: [%s]), minimum required is %d", [app_id, count(azs), concat(", ", azs), _min_azs])
 }
 
 # Violation: global app does not meet minimum region count
@@ -133,7 +133,7 @@ violation[{"remarks": msg}] if {
 	_min_regions > 0
 	some app_id, regions in _global_app_regions
 	count(regions) < _min_regions
-	msg := sprintf("App %q spans only %d region(s) across all clusters, minimum required is %d", [app_id, count(regions), _min_regions])
+	msg := sprintf("App %q spans only %d region(s) across all clusters (covered: [%s]), minimum required is %d", [app_id, count(regions), concat(", ", regions), _min_regions])
 }
 
 # Violation: pod on a node with no AZ label
