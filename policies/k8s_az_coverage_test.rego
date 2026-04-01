@@ -320,6 +320,7 @@ test_min_azs_not_met if {
 	some v, _ in violations
 	contains(v.remarks, "default/web")
 	contains(v.remarks, "2 AZ(s)")
+	contains(v.remarks, "covered:")
 	contains(v.remarks, "minimum required is 3")
 }
 
@@ -398,6 +399,7 @@ test_min_regions_not_met if {
 	some v, _ in violations
 	contains(v.remarks, "default/web")
 	contains(v.remarks, "1 region(s)")
+	contains(v.remarks, "covered:")
 	contains(v.remarks, "minimum required is 2")
 }
 
