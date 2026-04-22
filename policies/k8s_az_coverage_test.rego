@@ -53,6 +53,23 @@ _deployment_with_selector(name, namespace, selector_labels) := {
 	},
 }
 
+_deployment_with_match_expressions(name, namespace, match_expressions, template_labels) := {
+	"metadata": {
+		"name": name,
+		"namespace": namespace,
+	},
+	"spec": {
+		"selector": {
+			"matchExpressions": match_expressions,
+		},
+		"template": {
+			"metadata": {
+				"labels": template_labels,
+			},
+		},
+	},
+}
+
 _deployment_template_only(name, namespace, app) := {
 	"metadata": {
 		"name": name,
@@ -211,6 +228,57 @@ test_deployment_selector_matches_pods_without_app_name_label if {
 
 	violations := k8s_az_coverage.violation with input as fixture
 	count(violations) == 0
+}
+
+test_deployment_selector_match_expressions_match_pods if {
+	main := _deployment_with_match_expressions(
+		"api",
+		"app",
+		[{"key": "tier", "operator": "In", "values": ["frontend"]}],
+		{"tier": "frontend"},
+	)
+	clusters := {
+		"prod": _cluster("prod", "us-east-1",
+			[_node("n1", "us-east-1a")],
+			[
+				{
+					"metadata": {"name": "api-1", "namespace": "app", "labels": {"tier": "frontend"}},
+					"spec": {"nodeName": "n1"},
+				},
+			],
+			[main],
+		),
+	}
+	fixture := _input(main, _subject("prod", "app", "api", "api"), clusters, {"min_azs": 1})
+
+	violations := k8s_az_coverage.violation with input as fixture
+	count(violations) == 0
+}
+
+test_selector_workloads_do_not_fall_back_to_app_label_matching if {
+	main := _deployment_with_selector("web", "app", {"component": "web"})
+	clusters := {
+		"prod": _cluster("prod", "us-east-1",
+			[_node("n1", "us-east-1a"), _node("n2", "us-east-1b")],
+			[
+				{
+					"metadata": {"name": "web-selected", "namespace": "app", "labels": {"component": "web", "app.kubernetes.io/name": "web"}},
+					"spec": {"nodeName": "n1"},
+				},
+				{
+					"metadata": {"name": "web-unrelated", "namespace": "app", "labels": {"component": "other", "app.kubernetes.io/name": "web"}},
+					"spec": {"nodeName": "n2"},
+				},
+			],
+			[main],
+		),
+	}
+	fixture := _input(main, _subject("prod", "app", "web", "web"), clusters, {"expected_azs": ["us-east-1a", "us-east-1b"]})
+
+	violations := k8s_az_coverage.violation with input as fixture
+	count(violations) == 1
+	some v, _ in violations
+	contains(v.remarks, "required AZ us-east-1b")
 }
 
 test_pod_on_node_without_az_label if {

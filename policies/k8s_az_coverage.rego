@@ -130,13 +130,69 @@ _evaluated_app_id := _global_app_id(_current_namespace, _current_app_name)
 
 _global_app_id(namespace, app_name) := sprintf("%s/%s", [namespace, app_name])
 
+_selector_has_requirements(resource) if {
+	selector := object.get(object.get(resource, "spec", {}), "selector", {})
+	count(object.keys(object.get(selector, "matchLabels", {}))) > 0
+}
+
+_selector_has_requirements(resource) if {
+	selector := object.get(object.get(resource, "spec", {}), "selector", {})
+	count(object.get(selector, "matchExpressions", [])) > 0
+}
+
+_selector_match_expression_matches_pod(expr, pod) if {
+	operator := object.get(expr, "operator", "")
+	operator == "In"
+	key := object.get(expr, "key", "")
+	key != ""
+	values := object.get(expr, "values", [])
+	pod_labels := object.get(object.get(pod, "metadata", {}), "labels", {})
+	pod_value := object.get(pod_labels, key, null)
+	pod_value != null
+	pod_value in values
+}
+
+_selector_match_expression_matches_pod(expr, pod) if {
+	operator := object.get(expr, "operator", "")
+	operator == "NotIn"
+	key := object.get(expr, "key", "")
+	key != ""
+	values := object.get(expr, "values", [])
+	pod_labels := object.get(object.get(pod, "metadata", {}), "labels", {})
+	pod_value := object.get(pod_labels, key, null)
+	pod_value != null
+	not pod_value in values
+}
+
+_selector_match_expression_matches_pod(expr, pod) if {
+	operator := object.get(expr, "operator", "")
+	operator == "Exists"
+	key := object.get(expr, "key", "")
+	key != ""
+	pod_labels := object.get(object.get(pod, "metadata", {}), "labels", {})
+	object.get(pod_labels, key, null) != null
+}
+
+_selector_match_expression_matches_pod(expr, pod) if {
+	operator := object.get(expr, "operator", "")
+	operator == "DoesNotExist"
+	key := object.get(expr, "key", "")
+	key != ""
+	pod_labels := object.get(object.get(pod, "metadata", {}), "labels", {})
+	object.get(pod_labels, key, null) == null
+}
+
 _selector_matches_pod(resource, pod) if {
 	selector := object.get(object.get(resource, "spec", {}), "selector", {})
+	_selector_has_requirements(resource)
 	match_labels := object.get(selector, "matchLabels", {})
-	count(object.keys(match_labels)) > 0
+	match_expressions := object.get(selector, "matchExpressions", [])
 	pod_labels := object.get(object.get(pod, "metadata", {}), "labels", {})
 	every key, value in match_labels {
 		object.get(pod_labels, key, "") == value
+	}
+	every expr in match_expressions {
+		_selector_match_expression_matches_pod(expr, pod)
 	}
 }
 
@@ -202,7 +258,7 @@ _cluster_app_pods[cluster_name] contains pod if {
 	some cluster_name, cluster in _clusters
 	some pod in object.get(object.get(cluster, "resources", {}), "pods", [])
 	_resource_namespace(pod) == _current_namespace
-	not _selector_matches_pod(object.get(input, "main", {}), pod)
+	not _selector_has_requirements(object.get(input, "main", {}))
 	_resource_label_value(pod, _app_label) == _current_app_name
 }
 
