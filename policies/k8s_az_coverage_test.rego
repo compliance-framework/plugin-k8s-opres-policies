@@ -413,6 +413,24 @@ test_legacy_label_fallback if {
 	count(violations) == 0
 }
 
+test_legacy_label_fallback_when_current_zone_label_is_empty if {
+	main := _deployment("web", "app", "web")
+	clusters := {
+		"prod": _cluster("prod", "us-east-1",
+			[
+				{"metadata": {"name": "n1", "labels": {"topology.kubernetes.io/zone": "", "failure-domain.beta.kubernetes.io/zone": "us-east-1a"}}},
+				{"metadata": {"name": "n2", "labels": {"topology.kubernetes.io/zone": "", "failure-domain.beta.kubernetes.io/zone": "us-east-1b"}}},
+			],
+			[_pod("web-1", "app", "web", "n1"), _pod("web-2", "app", "web", "n2")],
+			[main],
+		),
+	}
+	fixture := _input(main, _subject("prod", "app", "web", "web"), clusters, {"expected_azs": ["us-east-1a", "us-east-1b"]})
+
+	violations := k8s_az_coverage.violation with input as fixture
+	count(violations) == 0
+}
+
 test_multi_cluster_global_coverage if {
 	main := _deployment("web", "app", "web")
 	clusters := {

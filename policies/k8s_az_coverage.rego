@@ -212,7 +212,7 @@ _node_az[cluster_name][node_name] := az if {
 	some node in object.get(object.get(cluster, "resources", {}), "nodes", [])
 	node_name := node.metadata.name
 	labels := object.get(object.get(node, "metadata", {}), "labels", {})
-	not labels["topology.kubernetes.io/zone"]
+	object.get(labels, "topology.kubernetes.io/zone", "") == ""
 	az := object.get(labels, "failure-domain.beta.kubernetes.io/zone", "")
 	az != ""
 }
