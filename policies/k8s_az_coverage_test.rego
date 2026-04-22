@@ -255,6 +255,90 @@ test_deployment_selector_match_expressions_match_pods if {
 	count(violations) == 0
 }
 
+test_deployment_selector_match_expressions_notin_requires_present_key if {
+	main := _deployment_with_match_expressions(
+		"api",
+		"app",
+		[{"key": "tier", "operator": "NotIn", "values": ["frontend"]}],
+		{"tier": "backend"},
+	)
+	clusters := {
+		"prod": _cluster("prod", "us-east-1",
+			[_node("n1", "us-east-1a"), _node("n2", "us-east-1b")],
+			[
+				{
+					"metadata": {"name": "api-1", "namespace": "app", "labels": {"tier": "backend", "app.kubernetes.io/name": "api"}},
+					"spec": {"nodeName": "n1"},
+				},
+				{
+					"metadata": {"name": "api-2", "namespace": "app", "labels": {"app.kubernetes.io/name": "api"}},
+					"spec": {"nodeName": "n2"},
+				},
+			],
+			[main],
+		),
+	}
+	fixture := _input(main, _subject("prod", "app", "api", "api"), clusters, {"expected_azs": ["us-east-1a", "us-east-1b"]})
+
+	raw_violations := k8s_az_coverage.violation with input as fixture
+	violations := [v.remarks |
+		some v, _ in raw_violations
+	]
+	count(violations) == 1
+	some v in violations
+	contains(v, "required AZ us-east-1b")
+}
+
+test_deployment_selector_match_expressions_exists_matches_pods if {
+	main := _deployment_with_match_expressions(
+		"api",
+		"app",
+		[{"key": "tier", "operator": "Exists"}],
+		{"tier": "frontend"},
+	)
+	clusters := {
+		"prod": _cluster("prod", "us-east-1",
+			[_node("n1", "us-east-1a")],
+			[
+				{
+					"metadata": {"name": "api-1", "namespace": "app", "labels": {"tier": "frontend"}},
+					"spec": {"nodeName": "n1"},
+				},
+			],
+			[main],
+		),
+	}
+	fixture := _input(main, _subject("prod", "app", "api", "api"), clusters, {"min_azs": 1})
+
+	violations := k8s_az_coverage.violation with input as fixture
+	count(violations) == 0
+}
+
+test_deployment_selector_match_expressions_doesnotexist_matches_pods if {
+	main := _deployment_with_match_expressions(
+		"api",
+		"app",
+		[{"key": "deprecated", "operator": "DoesNotExist"}],
+		{"app.kubernetes.io/name": "api"},
+	)
+	clusters := {
+		"prod": _cluster("prod", "us-east-1",
+			[_node("n1", "us-east-1a")],
+			[
+				{
+					"metadata": {"name": "api-1", "namespace": "app", "labels": {"app.kubernetes.io/name": "api"}},
+					"spec": {"nodeName": "n1"},
+				},
+			],
+			[main],
+		),
+	}
+	fixture := _input(main, _subject("prod", "app", "api", "api"), clusters, {"min_azs": 1})
+
+	violations := k8s_az_coverage.violation with input as fixture
+	count(violations) == 0
+}
+
 test_selector_workloads_do_not_fall_back_to_app_label_matching if {
 	main := _deployment_with_selector("web", "app", {"component": "web"})
 	clusters := {
