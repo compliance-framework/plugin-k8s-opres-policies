@@ -312,20 +312,30 @@ _format_seen_in_clusters(n) := sprintf("seen in %d clusters", [n]) if {
 	n != 1
 }
 
-_current_app_az_counts[az] := count([1 |
+_current_app_az_observations := [az |
 	some cluster_name, pods in _cluster_app_pods
 	some pod in pods
 	node_name := object.get(object.get(pod, "spec", {}), "nodeName", "")
 	node_name != ""
-	_node_az[cluster_name][node_name] == az
+	az := _node_az[cluster_name][node_name]
+]
+
+_current_app_az_counts[az] := count([1 |
+	some observed_az in _current_app_az_observations
+	observed_az == az
 ]) if {
 	some az in _current_app_azs
 }
 
-_current_app_region_counts[region] := count([1 |
+_current_app_region_observations := [region |
 	some cluster_name, pods in _cluster_app_pods
 	count(pods) > 0
-	_cluster_region[cluster_name] == region
+	region := _cluster_region[cluster_name]
+]
+
+_current_app_region_counts[region] := count([1 |
+	some observed_region in _current_app_region_observations
+	observed_region == region
 ]) if {
 	some region in _current_app_regions
 }
