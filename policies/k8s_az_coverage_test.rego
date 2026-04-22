@@ -225,6 +225,7 @@ test_pod_on_node_without_az_label if {
 	fixture := _input(main, _subject("prod", "app", "web", "web"), clusters, {"expected_azs": ["us-east-1a"]})
 
 	violations := k8s_az_coverage.violation with input as fixture
+	count(violations) == 1
 	some v, _ in violations
 	contains(v.remarks, "no AZ label")
 	contains(v.remarks, "web-2")
@@ -407,6 +408,7 @@ test_no_compliance_criteria if {
 	fixture := _input(main, _subject("prod", "app", "web", "web"), clusters, {})
 
 	violations := k8s_az_coverage.violation with input as fixture
+	count(violations) == 1
 	some v, _ in violations
 	contains(v.remarks, "No compliance criteria configured")
 }
@@ -419,6 +421,7 @@ test_empty_cluster_data if {
 	}
 
 	violations := k8s_az_coverage.violation with input as fixture
+	count(violations) == 1
 	some v, _ in violations
 	v.remarks == "No cluster data available"
 }

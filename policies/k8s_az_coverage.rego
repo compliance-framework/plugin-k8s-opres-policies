@@ -146,7 +146,8 @@ _node_az[cluster_name][node_name] := az if {
 	some node in object.get(object.get(cluster, "resources", {}), "nodes", [])
 	node_name := node.metadata.name
 	labels := object.get(object.get(node, "metadata", {}), "labels", {})
-	az := labels["topology.kubernetes.io/zone"]
+	az := object.get(labels, "topology.kubernetes.io/zone", "")
+	az != ""
 }
 
 # Per-cluster: node_name → AZ (legacy label fallback)
@@ -156,7 +157,8 @@ _node_az[cluster_name][node_name] := az if {
 	node_name := node.metadata.name
 	labels := object.get(object.get(node, "metadata", {}), "labels", {})
 	not labels["topology.kubernetes.io/zone"]
-	az := labels["failure-domain.beta.kubernetes.io/zone"]
+	az := object.get(labels, "failure-domain.beta.kubernetes.io/zone", "")
+	az != ""
 }
 
 # Per-cluster: region for a given cluster
@@ -173,7 +175,8 @@ _cluster_region[cluster_name] := region if {
 	object.get(cluster_info, "region", "") == ""
 	some node in object.get(object.get(cluster, "resources", {}), "nodes", [])
 	labels := object.get(object.get(node, "metadata", {}), "labels", {})
-	region := labels["topology.kubernetes.io/region"]
+	region := object.get(labels, "topology.kubernetes.io/region", "")
+	region != ""
 }
 
 _cluster_region[cluster_name] := region if {
@@ -183,7 +186,8 @@ _cluster_region[cluster_name] := region if {
 	some node in object.get(object.get(cluster, "resources", {}), "nodes", [])
 	labels := object.get(object.get(node, "metadata", {}), "labels", {})
 	not labels["topology.kubernetes.io/region"]
-	region := labels["failure-domain.beta.kubernetes.io/region"]
+	region := object.get(labels, "failure-domain.beta.kubernetes.io/region", "")
+	region != ""
 }
 
 # Per-cluster current app tracking for pod-level checks
@@ -401,16 +405,18 @@ _failure_details := concat("\n", [msg |
 	msg := sprintf("  %s = %s", [app_id, concat("; ", parts)])
 ])
 
+_failed_check_count := count([1 | count(_missing_expected_azs) > 0]) + count([1 | count(_missing_expected_regions) > 0]) + count([1 | _min_azs > 0; count(_current_app_azs) < _min_azs]) + count([1 | _min_regions > 0; count(_current_app_regions) < _min_regions])
+
 title := sprintf("AZ checks for k8s deployment %s/%s/%s", [object.get(_subject, "cluster_name", object.get(object.get(object.get(input, "context", {}), "cluster", {}), "name", "")), _current_namespace, _resource_name(object.get(input, "main", {}))])
 
 description := sprintf("Evaluated AZ/region coverage for deployment %q across %d cluster(s).\nFailed checks: %d",
-	[_evaluated_app_id, count(_clusters), count(_failed_apps)]) if {
+	[_evaluated_app_id, count(_clusters), _failed_check_count]) if {
 	count(_failed_apps) == 0
 }
 
 description := concat("", [
 	sprintf("Evaluated AZ/region coverage for deployment %q across %d cluster(s).\n", [_evaluated_app_id, count(_clusters)]),
-	sprintf("Failed checks: %d\n", [count(_failed_apps)]),
+	sprintf("Failed checks: %d\n", [_failed_check_count]),
 	_failure_details,
 ]) if {
 	count(_failed_apps) > 0
