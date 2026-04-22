@@ -407,6 +407,33 @@ test_min_regions_falls_back_to_node_region_labels if {
 	count(violations) == 0
 }
 
+test_conflicting_node_region_labels_do_not_satisfy_min_regions if {
+	main := _deployment("web", "app", "web")
+	clusters := {
+		"mixed": _cluster("mixed", "",
+			[
+				_node_with_region("n1", "us-east-1a", "us-east-1"),
+				_node_with_region("n2", "us-east-1b", "us-west-2"),
+			],
+			[
+				_pod("web-1", "app", "web", "n1"),
+				_pod("web-2", "app", "web", "n2"),
+			],
+			[main],
+		),
+	}
+	fixture := _input(main, _subject("mixed", "app", "web", "web"), clusters, {"min_regions": 1})
+
+	raw_violations := k8s_az_coverage.violation with input as fixture
+	violations := [v.remarks |
+		some v, _ in raw_violations
+	]
+	count(violations) == 1
+	some v in violations
+	contains(v, "spans only 0 region(s)")
+	contains(v, "current regions: none observed")
+}
+
 test_failure_messages_include_observed_az_and_region_counts if {
 	main := _deployment("web", "app", "web")
 	clusters := {
@@ -433,9 +460,9 @@ test_failure_messages_include_observed_az_and_region_counts if {
  	some v in violations
  	contains(v, "current AZs: local-a - seen twice, local-b - seen once")
  	some region_violation in violations
- 	contains(region_violation, "current regions: local - seen twice")
+ 	contains(region_violation, "current regions: local - seen in 2 clusters")
  	contains(description, "only 2/3 AZs (current AZs: local-a - seen twice, local-b - seen once)")
- 	contains(description, "only 1/2 regions (current regions: local - seen twice)")
+ 	contains(description, "only 1/2 regions (current regions: local - seen in 2 clusters)")
  }
 
  test_subject_identity_label_fallback_if_main_is_missing_metadata_label if {

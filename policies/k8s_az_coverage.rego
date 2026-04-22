@@ -225,7 +225,7 @@ _cluster_region[cluster_name] := region if {
 	region != ""
 }
 
-_cluster_region[cluster_name] := region if {
+_cluster_observed_regions[cluster_name] contains region if {
 	some cluster_name, cluster in _clusters
 	cluster_info := object.get(cluster, "cluster", {})
 	object.get(cluster_info, "region", "") == ""
@@ -235,7 +235,7 @@ _cluster_region[cluster_name] := region if {
 	region != ""
 }
 
-_cluster_region[cluster_name] := region if {
+_cluster_observed_regions[cluster_name] contains region if {
 	some cluster_name, cluster in _clusters
 	cluster_info := object.get(cluster, "cluster", {})
 	object.get(cluster_info, "region", "") == ""
@@ -244,6 +244,14 @@ _cluster_region[cluster_name] := region if {
 	not labels["topology.kubernetes.io/region"]
 	region := object.get(labels, "failure-domain.beta.kubernetes.io/region", "")
 	region != ""
+}
+
+_cluster_region[cluster_name] := region if {
+	some cluster_name, cluster in _clusters
+	cluster_info := object.get(cluster, "cluster", {})
+	object.get(cluster_info, "region", "") == ""
+	count(_cluster_observed_regions[cluster_name]) == 1
+	some region in _cluster_observed_regions[cluster_name]
 }
 
 # Per-cluster current app tracking for pod-level checks
@@ -284,10 +292,6 @@ _current_app_regions := {region |
 	region := _cluster_region[cluster_name]
 }
 
-_current_app_az_list := sort([az | some az in _current_app_azs])
-
-_current_app_region_list := sort([region | some region in _current_app_regions])
-
 _format_seen_count(n) := "seen once" if {
 	n == 1
 }
@@ -298,6 +302,14 @@ _format_seen_count(n) := "seen twice" if {
 
 _format_seen_count(n) := sprintf("seen %d times", [n]) if {
 	n > 2
+}
+
+_format_seen_in_clusters(n) := "seen in 1 cluster" if {
+	n == 1
+}
+
+_format_seen_in_clusters(n) := sprintf("seen in %d clusters", [n]) if {
+	n != 1
 }
 
 _current_app_az_counts[az] := count([1 |
@@ -322,7 +334,7 @@ _current_app_az_count_list := sort([sprintf("%s - %s", [az, _format_seen_count(_
 	some az in _current_app_azs
 ])
 
-_current_app_region_count_list := sort([sprintf("%s - %s", [region, _format_seen_count(_current_app_region_counts[region])]) |
+_current_app_region_count_list := sort([sprintf("%s - %s", [region, _format_seen_in_clusters(_current_app_region_counts[region])]) |
 	some region in _current_app_regions
 ])
 
