@@ -3,113 +3,226 @@ package compliance_framework.k8s_az_coverage_test
 import data.compliance_framework.k8s_az_coverage
 import rego.v1
 
-# --- Helpers ---
-
-_base_fixture(cluster_nodes, cluster_pods) := {
-	"expected_azs": ["us-east-1a", "us-east-1b", "us-east-1c"],
-	"clusters": {"prod": {
-		"name": "prod",
-		"region": "us-east-1",
-		"resources": {
-			"nodes": cluster_nodes,
-			"pods": cluster_pods,
-		},
-	}},
-}
-
-_min_az_fixture(min_azs, cluster_nodes, cluster_pods) := {
-	"min_azs": min_azs,
-	"clusters": {"prod": {
-		"name": "prod",
-		"region": "us-east-1",
-		"resources": {
-			"nodes": cluster_nodes,
-			"pods": cluster_pods,
-		},
-	}},
-}
-
-_min_region_fixture(min_regions, clusters) := {
-	"min_regions": min_regions,
-	"clusters": clusters,
-}
-
 _node(name, az) := {"metadata": {"name": name, "labels": {"topology.kubernetes.io/zone": az}}}
 
 _node_legacy(name, az) := {"metadata": {"name": name, "labels": {"failure-domain.beta.kubernetes.io/zone": az}}}
 
+_node_with_region(name, az, region) := {"metadata": {"name": name, "labels": {"topology.kubernetes.io/zone": az, "topology.kubernetes.io/region": region}}}
+
 _node_no_az(name) := {"metadata": {"name": name, "labels": {}}}
 
-_pod(name, app, node_name) := {
-	"metadata": {"name": name, "labels": {"app.kubernetes.io/name": app}},
+_pod(name, namespace, app, node_name) := {
+	"metadata": {"name": name, "namespace": namespace, "labels": {"app.kubernetes.io/name": app}},
 	"spec": {"nodeName": node_name},
 }
 
-# --- App missing from expected AZ ---
-
-test_app_missing_from_az if {
-	fixture := _base_fixture(
-		[_node("n1", "us-east-1a"), _node("n2", "us-east-1b")],
-		[_pod("web-1", "web", "n1"), _pod("web-2", "web", "n2")],
-	)
-
-	violations := k8s_az_coverage.violation with input as fixture
-	# web is missing from us-east-1c
-	count(violations) == 1
-	some v, _ in violations
-	contains(v.remarks, "us-east-1c")
-	contains(v.remarks, "web")
+_pod_with_label(name, namespace, label_key, label_value, node_name) := {
+	"metadata": {"name": name, "namespace": namespace, "labels": {label_key: label_value}},
+	"spec": {"nodeName": node_name},
 }
 
-# --- App in all expected AZs → no AZ-related violations ---
+_deployment(name, namespace, app) := {
+	"metadata": {
+		"name": name,
+		"namespace": namespace,
+		"labels": {"app.kubernetes.io/name": app},
+	},
+	"spec": {
+		"template": {
+			"metadata": {
+				"labels": {"app.kubernetes.io/name": app},
+			},
+		},
+	},
+}
 
-test_app_covers_all_azs if {
-	fixture := _base_fixture(
-		[_node("n1", "us-east-1a"), _node("n2", "us-east-1b"), _node("n3", "us-east-1c")],
-		[
-			_pod("web-1", "web", "n1"),
-			_pod("web-2", "web", "n2"),
-			_pod("web-3", "web", "n3"),
-		],
-	)
+_deployment_with_selector(name, namespace, selector_labels) := {
+	"metadata": {
+		"name": name,
+		"namespace": namespace,
+	},
+	"spec": {
+		"selector": {
+			"matchLabels": selector_labels,
+		},
+		"template": {
+			"metadata": {
+				"labels": selector_labels,
+			},
+		},
+	},
+}
+
+_deployment_template_only(name, namespace, app) := {
+	"metadata": {
+		"name": name,
+		"namespace": namespace,
+	},
+	"spec": {
+		"template": {
+			"metadata": {
+				"labels": {"app.kubernetes.io/name": app},
+			},
+		},
+	},
+}
+
+_deployment_with_label(name, namespace, label_key, label_value) := {
+	"metadata": {
+		"name": name,
+		"namespace": namespace,
+		"labels": {label_key: label_value},
+	},
+	"spec": {
+		"template": {
+			"metadata": {
+				"labels": {label_key: label_value},
+			},
+		},
+	},
+}
+
+_cluster(name, region, nodes, pods, deployments) := {
+	"cluster": {
+		"name": name,
+		"region": region,
+		"provider": "eks",
+	},
+	"resources": {
+		"nodes": nodes,
+		"pods": pods,
+		"deployments": deployments,
+	},
+}
+
+_subject(cluster_name, namespace, name, app_name) := {
+	"cluster_name": cluster_name,
+	"resource_type": "deployments",
+	"namespace": namespace,
+	"name": name,
+	"identifier": sprintf("k8s-deployments/%s/%s/%s", [cluster_name, namespace, name]),
+	"identity_labels": {
+		"app_name": app_name,
+	},
+}
+
+_input(main, subject, clusters, extra) := object.union({
+	"schema_version": "v2",
+	"source": "plugin-kubernetes",
+	"main": main,
+	"subject": subject,
+	"context": object.get(clusters, object.get(subject, "cluster_name", ""), {"cluster": {}, "resources": {}}),
+	"fleet": {"clusters": clusters},
+}, extra)
+
+test_app_missing_from_expected_az_if_deployment_subject if {
+	main := _deployment("web", "app", "web")
+	clusters := {
+		"prod": _cluster("prod", "us-east-1",
+			[_node("n1", "us-east-1a"), _node("n2", "us-east-1b")],
+			[_pod("web-1", "app", "web", "n1"), _pod("web-2", "app", "web", "n2")],
+			[main],
+		),
+	}
+	fixture := _input(main, _subject("prod", "app", "web", "web"), clusters, {"expected_azs": ["us-east-1a", "us-east-1b", "us-east-1c"]})
 
 	violations := k8s_az_coverage.violation with input as fixture
-	# no violations (app covers all AZs, expected_azs is set, clusters exist)
+	count(violations) == 1
+	some v, _ in violations
+	contains(v.remarks, "app/web")
+	contains(v.remarks, "us-east-1c")
+}
+
+test_app_covers_all_expected_azs_if_deployment_subject if {
+	main := _deployment("web", "app", "web")
+	clusters := {
+		"prod": _cluster("prod", "us-east-1",
+			[_node("n1", "us-east-1a"), _node("n2", "us-east-1b"), _node("n3", "us-east-1c")],
+			[_pod("web-1", "app", "web", "n1"), _pod("web-2", "app", "web", "n2"), _pod("web-3", "app", "web", "n3")],
+			[main],
+		),
+	}
+	fixture := _input(main, _subject("prod", "app", "web", "web"), clusters, {"expected_azs": ["us-east-1a", "us-east-1b", "us-east-1c"]})
+
+	violations := k8s_az_coverage.violation with input as fixture
 	count(violations) == 0
 }
 
-# --- Multiple apps, one missing AZ ---
-
-test_multiple_apps_one_missing if {
-	fixture := _base_fixture(
-		[_node("n1", "us-east-1a"), _node("n2", "us-east-1b"), _node("n3", "us-east-1c")],
-		[
-			_pod("web-1", "web", "n1"),
-			_pod("web-2", "web", "n2"),
-			_pod("web-3", "web", "n3"),
-			_pod("api-1", "api", "n1"),
-			# api only in n1 → missing us-east-1b and us-east-1c
-		],
-	)
+test_many_pods_same_namespace_are_evaluated_as_one_app if {
+	main := _deployment("web", "app", "web")
+	clusters := {
+		"prod": _cluster("prod", "us-east-1",
+			[_node("n1", "us-east-1a"), _node("n2", "us-east-1b"), _node("n3", "us-east-1c")],
+			[
+				_pod("web-1", "app", "web", "n1"),
+				_pod("web-2", "app", "web", "n1"),
+				_pod("web-3", "app", "web", "n1"),
+				_pod("web-4", "app", "web", "n2"),
+				_pod("web-5", "app", "web", "n2"),
+				_pod("web-6", "app", "web", "n2"),
+				_pod("web-7", "app", "web", "n3"),
+				_pod("web-8", "app", "web", "n3"),
+				_pod("web-9", "app", "web", "n3"),
+				_pod("web-10", "app", "web", "n3"),
+			],
+			[main],
+		),
+	}
+	fixture := _input(main, _subject("prod", "app", "web", "web"), clusters, {"min_azs": 3})
 
 	violations := k8s_az_coverage.violation with input as fixture
-	count(violations) == 2
+	count(violations) == 0
 }
 
-# --- Pod on node with no AZ label ---
+test_current_deployment_ignores_other_apps if {
+	main := _deployment("web", "app", "web")
+	clusters := {
+		"prod": _cluster("prod", "us-east-1",
+			[_node("n1", "us-east-1a"), _node("n2", "us-east-1b")],
+			[
+				_pod("web-1", "app", "web", "n1"),
+				_pod("web-2", "app", "web", "n2"),
+				_pod("api-1", "app", "api", "n1"),
+			],
+			[main, _deployment("api", "app", "api")],
+		),
+	}
+	fixture := _input(main, _subject("prod", "app", "web", "web"), clusters, {"expected_azs": ["us-east-1a", "us-east-1b"]})
+
+	violations := k8s_az_coverage.violation with input as fixture
+	count(violations) == 0
+}
+
+test_deployment_selector_matches_pods_without_app_name_label if {
+	main := _deployment_with_selector("coredns", "kube-system", {"k8s-app": "kube-dns"})
+	clusters := {
+		"kind": _cluster("kind", "local",
+			[_node("kind-control-plane", "us-west-1a")],
+			[
+				{
+					"metadata": {"name": "coredns-1", "namespace": "kube-system", "labels": {"k8s-app": "kube-dns"}},
+					"spec": {"nodeName": "kind-control-plane"},
+				},
+			],
+			[main],
+		),
+	}
+	fixture := _input(main, _subject("kind", "kube-system", "coredns", "coredns"), clusters, {"min_azs": 1})
+
+	violations := k8s_az_coverage.violation with input as fixture
+	count(violations) == 0
+}
 
 test_pod_on_node_without_az_label if {
-	fixture := {
-		"expected_azs": ["us-east-1a"],
-		"clusters": {"prod": {
-			"name": "prod",
-			"region": "us-east-1",
-			"resources": {
-				"nodes": [_node("n1", "us-east-1a"), _node_no_az("n2")],
-				"pods": [_pod("web-1", "web", "n1"), _pod("web-2", "web", "n2")],
-			},
-		}},
+	main := _deployment("web", "app", "web")
+	clusters := {
+		"prod": _cluster("prod", "us-east-1",
+			[_node("n1", "us-east-1a"), _node_no_az("n2")],
+			[_pod("web-1", "app", "web", "n1"), _pod("web-2", "app", "web", "n2")],
+			[main],
+		),
 	}
+	fixture := _input(main, _subject("prod", "app", "web", "web"), clusters, {"expected_azs": ["us-east-1a"]})
 
 	violations := k8s_az_coverage.violation with input as fixture
 	some v, _ in violations
@@ -117,525 +230,228 @@ test_pod_on_node_without_az_label if {
 	contains(v.remarks, "web-2")
 }
 
-# --- No compliance criteria → violation ---
+test_custom_app_label if {
+	main := _deployment_with_label("backend", "app", "team", "backend")
+	clusters := {
+		"prod": _cluster("prod", "us-east-1",
+			[_node("n1", "us-east-1a"), _node("n2", "us-east-1b")],
+			[_pod_with_label("svc-1", "app", "team", "backend", "n1"), _pod_with_label("svc-2", "app", "team", "backend", "n2")],
+			[main],
+		),
+	}
+	fixture := _input(main, _subject("prod", "app", "backend", "backend"), clusters, {"app_label": "team", "expected_azs": ["us-east-1a", "us-east-1b"]})
+
+	violations := k8s_az_coverage.violation with input as fixture
+	count(violations) == 0
+}
+
+test_legacy_label_fallback if {
+	main := _deployment("web", "app", "web")
+	clusters := {
+		"prod": _cluster("prod", "us-east-1",
+			[_node_legacy("n1", "us-east-1a"), _node_legacy("n2", "us-east-1b")],
+			[_pod("web-1", "app", "web", "n1"), _pod("web-2", "app", "web", "n2")],
+			[main],
+		),
+	}
+	fixture := _input(main, _subject("prod", "app", "web", "web"), clusters, {"expected_azs": ["us-east-1a", "us-east-1b"]})
+
+	violations := k8s_az_coverage.violation with input as fixture
+	count(violations) == 0
+}
+
+test_multi_cluster_global_coverage if {
+	main := _deployment("web", "app", "web")
+	clusters := {
+		"prod-east": _cluster("prod-east", "us-east-1",
+			[_node("n1", "us-east-1a")],
+			[_pod("web-1", "app", "web", "n1")],
+			[main],
+		),
+		"prod-west": _cluster("prod-west", "us-west-2",
+			[_node("n2", "us-east-1b")],
+			[_pod("web-2", "app", "web", "n2")],
+			[_deployment("web", "app", "web")],
+		),
+	}
+	fixture := _input(main, _subject("prod-east", "app", "web", "web"), clusters, {"expected_azs": ["us-east-1a", "us-east-1b"]})
+
+	violations := k8s_az_coverage.violation with input as fixture
+	count(violations) == 0
+}
+
+test_min_regions_and_expected_regions_use_cross_cluster_coverage if {
+	main := _deployment("web", "app", "web")
+	clusters := {
+		"east": _cluster("east", "us-east-1",
+			[_node("n1", "us-east-1a")],
+			[_pod("web-1", "app", "web", "n1")],
+			[main],
+		),
+		"west": _cluster("west", "us-west-2",
+			[_node("n2", "us-west-2a")],
+			[_pod("web-2", "app", "web", "n2")],
+			[_deployment("web", "app", "web")],
+		),
+	}
+	fixture := _input(main, _subject("east", "app", "web", "web"), clusters, {"min_regions": 2, "expected_regions": ["us-east-1", "us-west-2"]})
+
+	violations := k8s_az_coverage.violation with input as fixture
+	count(violations) == 0
+}
+
+test_expected_regions_not_met if {
+	main := _deployment("web", "app", "web")
+	clusters := {
+		"east": _cluster("east", "us-east-1",
+			[_node("n1", "us-east-1a")],
+			[_pod("web-1", "app", "web", "n1")],
+			[main],
+		),
+	}
+	fixture := _input(main, _subject("east", "app", "web", "web"), clusters, {"expected_regions": ["us-east-1", "eu-west-1"]})
+
+	violations := k8s_az_coverage.violation with input as fixture
+	count(violations) == 1
+	some v, _ in violations
+	contains(v.remarks, "app/web")
+	contains(v.remarks, "eu-west-1")
+}
+
+test_min_regions_falls_back_to_node_region_labels if {
+	main := _deployment("web", "app", "web")
+	clusters := {
+		"east": _cluster("east", "",
+			[_node_with_region("n1", "us-east-1a", "us-east-1")],
+			[_pod("web-1", "app", "web", "n1")],
+			[main],
+		),
+		"west": _cluster("west", "",
+			[_node_with_region("n2", "us-west-2a", "us-west-2")],
+			[_pod("web-2", "app", "web", "n2")],
+			[_deployment("web", "app", "web")],
+		),
+	}
+	fixture := _input(main, _subject("east", "app", "web", "web"), clusters, {"min_regions": 2})
+
+	violations := k8s_az_coverage.violation with input as fixture
+	count(violations) == 0
+}
+
+test_failure_messages_include_observed_az_and_region_counts if {
+	main := _deployment("web", "app", "web")
+	clusters := {
+		"kind-a": _cluster("kind-a", "local",
+			[_node("n1", "local-a")],
+			[_pod("web-1", "app", "web", "n1"), _pod("web-2", "app", "web", "n1")],
+			[main],
+		),
+		"kind-b": _cluster("kind-b", "local",
+			[_node("n2", "local-b")],
+			[_pod("web-3", "app", "web", "n2")],
+			[_deployment("web", "app", "web")],
+		),
+	}
+	fixture := _input(main, _subject("kind-a", "app", "web", "web"), clusters, {"min_azs": 3, "min_regions": 2})
+ 
+	raw_violations := k8s_az_coverage.violation with input as fixture
+	violations := [v.remarks |
+		some v, _ in raw_violations
+	]
+ 	description := k8s_az_coverage.description with input as fixture
+ 
+ 	count(violations) == 2
+ 	some v in violations
+ 	contains(v, "current AZs: local-a - seen twice, local-b - seen once")
+ 	some region_violation in violations
+ 	contains(region_violation, "current regions: local - seen twice")
+ 	contains(description, "only 2/3 AZs (current AZs: local-a - seen twice, local-b - seen once)")
+ 	contains(description, "only 1/2 regions (current regions: local - seen twice)")
+ }
+
+ test_subject_identity_label_fallback_if_main_is_missing_metadata_label if {
+ 	main := {"metadata": {"name": "web", "namespace": "app"}}
+	clusters := {
+		"prod": _cluster("prod", "us-east-1",
+			[_node("n1", "us-east-1a"), _node("n2", "us-east-1b")],
+			[_pod("web-1", "app", "web", "n1"), _pod("web-2", "app", "web", "n2")],
+			[main],
+		),
+	}
+	fixture := _input(main, _subject("prod", "app", "web", "web"), clusters, {"expected_azs": ["us-east-1a", "us-east-1b"]})
+
+	violations := k8s_az_coverage.violation with input as fixture
+	count(violations) == 0
+}
+
+test_main_deployment_template_label_is_used if {
+	main := _deployment_template_only("web", "app", "web")
+	clusters := {
+		"prod": _cluster("prod", "us-east-1",
+			[_node("n1", "us-east-1a"), _node("n2", "us-east-1b")],
+			[_pod("web-1", "app", "web", "n1"), _pod("web-2", "app", "web", "n2")],
+			[main],
+		),
+	}
+	fixture := _input(main, _subject("prod", "app", "web", "web"), clusters, {"expected_azs": ["us-east-1a", "us-east-1b"]})
+
+	violations := k8s_az_coverage.violation with input as fixture
+	count(violations) == 0
+}
 
 test_no_compliance_criteria if {
-	fixture := {
-		"clusters": {"prod": {
-			"name": "prod",
-			"region": "us-east-1",
-			"resources": {
-				"nodes": [_node("n1", "us-east-1a")],
-				"pods": [_pod("web-1", "web", "n1")],
-			},
-		}},
+	main := _deployment("web", "app", "web")
+	clusters := {
+		"prod": _cluster("prod", "us-east-1", [_node("n1", "us-east-1a")], [_pod("web-1", "app", "web", "n1")], [main]),
 	}
+	fixture := _input(main, _subject("prod", "app", "web", "web"), clusters, {})
 
 	violations := k8s_az_coverage.violation with input as fixture
 	some v, _ in violations
 	contains(v.remarks, "No compliance criteria configured")
 }
 
-# --- Empty cluster data → violation ---
-
 test_empty_cluster_data if {
-	violations := k8s_az_coverage.violation with input as {}
+	fixture := {
+		"main": _deployment("web", "app", "web"),
+		"subject": _subject("prod", "app", "web", "web"),
+		"fleet": {"clusters": {}},
+	}
+
+	violations := k8s_az_coverage.violation with input as fixture
 	some v, _ in violations
 	v.remarks == "No cluster data available"
 }
 
-# --- Custom app_label ---
-
-test_custom_app_label if {
-	fixture := {
-		"expected_azs": ["us-east-1a", "us-east-1b"],
-		"app_label": "team",
-		"clusters": {"prod": {
-			"name": "prod",
-			"region": "us-east-1",
-			"resources": {
-				"nodes": [_node("n1", "us-east-1a"), _node("n2", "us-east-1b")],
-				"pods": [
-					{
-						"metadata": {"name": "svc-1", "labels": {"team": "backend"}},
-						"spec": {"nodeName": "n1"},
-					},
-					{
-						"metadata": {"name": "svc-2", "labels": {"team": "backend"}},
-						"spec": {"nodeName": "n2"},
-					},
-				],
-			},
-		}},
-	}
-
-	violations := k8s_az_coverage.violation with input as fixture
-	count(violations) == 0
-}
-
-# --- Legacy label fallback ---
-
-test_legacy_label_fallback if {
-	fixture := {
-		"expected_azs": ["us-east-1a", "us-east-1b"],
-		"clusters": {"prod": {
-			"name": "prod",
-			"region": "us-east-1",
-			"resources": {
-				"nodes": [_node_legacy("n1", "us-east-1a"), _node_legacy("n2", "us-east-1b")],
-				"pods": [_pod("web-1", "web", "n1"), _pod("web-2", "web", "n2")],
-			},
-		}},
-	}
-
-	violations := k8s_az_coverage.violation with input as fixture
-	count(violations) == 0
-}
-
-# --- Multi-cluster: web app covers all AZs globally ---
-
-test_multi_cluster_global_coverage if {
-	fixture := {
-		"expected_azs": ["us-east-1a", "us-east-1b"],
-		"clusters": {
-			"prod-east": {
-				"name": "prod-east",
-				"region": "us-east-1",
-				"resources": {
-					"nodes": [_node("n1", "us-east-1a"), _node("n2", "us-east-1b")],
-					"pods": [_pod("web-1", "web", "n1"), _pod("web-2", "web", "n2")],
-				},
-			},
-			"prod-west": {
-				"name": "prod-west",
-				"region": "us-west-2",
-				"resources": {
-					"nodes": [_node("n1", "us-east-1a")],
-					"pods": [_pod("web-1", "web", "n1")],
-				},
-			},
-		},
-	}
-
-	violations := k8s_az_coverage.violation with input as fixture
-	# web app covers all AZs globally (us-east-1a and us-east-1b across both clusters)
-	count(violations) == 0
-}
-
-# --- Multi-cluster: app missing AZ globally ---
-
-test_multi_cluster_global_missing if {
-	fixture := {
-		"expected_azs": ["us-east-1a", "us-east-1b", "us-east-1c"],
-		"clusters": {
-			"prod-east": {
-				"name": "prod-east",
-				"region": "us-east-1",
-				"resources": {
-					"nodes": [_node("n1", "us-east-1a"), _node("n2", "us-east-1b")],
-					"pods": [_pod("web-1", "web", "n1"), _pod("web-2", "web", "n2")],
-				},
-			},
-			"prod-west": {
-				"name": "prod-west",
-				"region": "us-west-2",
-				"resources": {
-					"nodes": [_node("n1", "us-east-1a")],
-					"pods": [_pod("web-1", "web", "n1")],
-				},
-			},
-		},
-	}
-
-	violations := k8s_az_coverage.violation with input as fixture
-	# web app missing us-east-1c globally
-	count(violations) == 1
-	some v, _ in violations
-	contains(v.remarks, "default/web")
-	contains(v.remarks, "us-east-1c")
-}
-
-# --- Pods without app label are ignored ---
-
-test_pods_without_app_label_ignored if {
-	fixture := _base_fixture(
-		[_node("n1", "us-east-1a"), _node("n2", "us-east-1b"), _node("n3", "us-east-1c")],
-		[
-			_pod("web-1", "web", "n1"),
-			_pod("web-2", "web", "n2"),
-			_pod("web-3", "web", "n3"),
-			# pod without app label
-			{"metadata": {"name": "sidecar", "labels": {}}, "spec": {"nodeName": "n1"}},
-		],
-	)
-
-	violations := k8s_az_coverage.violation with input as fixture
-	count(violations) == 0
-}
-
-# --- Title and description ---
-
 test_title if {
-	k8s_az_coverage.title == "Kubernetes AZ Coverage Check" with input as {}
+	fixture := _input(_deployment("web", "app", "web"), _subject("prod", "app", "web", "web"), {}, {})
+	k8s_az_coverage.title == "AZ checks for k8s deployment prod/app/web" with input as fixture
+}
+
+test_risk_templates if {
+	fixture := _input(_deployment("web", "app", "web"), _subject("prod", "app", "web", "web"), {}, {})
+	risk_templates := k8s_az_coverage.risk_templates with input as fixture
+	count(risk_templates) == 1
+	risk_templates[0].name == "Application may be non-resilient due to insufficient multi-AZ or multi-region coverage"
+	risk_templates[0].title == "Application {{ .namespace }}/{{ .app_name }} may be non-resilient due to insufficient multi-AZ or multi-region coverage"
+	risk_templates[0].statement == "Application {{ .namespace }}/{{ .app_name }} is not distributed across the required availability zones or regions and may be unable to tolerate node, zone, or regional failures. Concentrating replicas in too few failure domains increases the likelihood of service disruption, degraded availability, and delayed recovery during infrastructure incidents or maintenance events."
+	risk_templates[0].likelihood_hint == "moderate"
+	risk_templates[0].impact_hint == "high"
+	risk_templates[0].dedupe_label_keys == ["namespace", "app_name"]
+	count(risk_templates[0].label_schema) == 2
+	risk_templates[0].label_schema[0].key == "namespace"
+	risk_templates[0].label_schema[1].key == "app_name"
+	risk_templates[0].remediation.title == "Distribute application replicas across independent failure domains"
+	count(risk_templates[0].remediation.tasks) == 5
 }
 
 test_description_with_clusters if {
-	fixture := {
-		"expected_azs": ["us-east-1a"],
-		"clusters": {"prod": {
-			"name": "prod",
-			"region": "us-east-1",
-			"resources": {"nodes": [], "pods": []},
-		}},
+	main := _deployment("web", "app", "web")
+	clusters := {
+		"prod": _cluster("prod", "us-east-1", [], [], [main]),
 	}
+	fixture := _input(main, _subject("prod", "app", "web", "web"), clusters, {"expected_azs": ["us-east-1a"]})
 
 	d := k8s_az_coverage.description with input as fixture
 	contains(d, "1 cluster(s)")
-}
-
-# --- min_azs: app meets minimum → no violation ---
-
-test_min_azs_met if {
-	fixture := _min_az_fixture(
-		2,
-		[_node("n1", "us-east-1a"), _node("n2", "us-east-1b")],
-		[_pod("web-1", "web", "n1"), _pod("web-2", "web", "n2")],
-	)
-
-	violations := k8s_az_coverage.violation with input as fixture
-	count(violations) == 0
-}
-
-# --- min_azs: app below minimum → violation ---
-
-test_min_azs_not_met if {
-	fixture := _min_az_fixture(
-		3,
-		[_node("n1", "us-east-1a"), _node("n2", "us-east-1b")],
-		[_pod("web-1", "web", "n1"), _pod("web-2", "web", "n2")],
-	)
-
-	violations := k8s_az_coverage.violation with input as fixture
-	count(violations) == 1
-	some v, _ in violations
-	contains(v.remarks, "default/web")
-	contains(v.remarks, "2 AZ(s)")
-	contains(v.remarks, "covered:")
-	contains(v.remarks, "minimum required is 3")
-}
-
-# --- min_azs: counts AZs globally across clusters ---
-
-test_min_azs_global_count if {
-	fixture := {
-		"min_azs": 3,
-		"clusters": {
-			"east": {
-				"name": "east",
-				"region": "us-east-1",
-				"resources": {
-					"nodes": [_node("n1", "us-east-1a"), _node("n2", "us-east-1b")],
-					"pods": [_pod("web-1", "web", "n1"), _pod("web-2", "web", "n2")],
-				},
-			},
-			"west": {
-				"name": "west",
-				"region": "us-west-2",
-				"resources": {
-					"nodes": [_node("n3", "us-west-2a")],
-					"pods": [_pod("web-3", "web", "n3")],
-				},
-			},
-		},
-	}
-
-	violations := k8s_az_coverage.violation with input as fixture
-	# web spans us-east-1a, us-east-1b, us-west-2a → 3 AZs → meets min_azs=3
-	count(violations) == 0
-}
-
-# --- min_regions: app meets minimum → no violation ---
-
-test_min_regions_met if {
-	fixture := _min_region_fixture(2, {
-		"east": {
-			"name": "east",
-			"region": "us-east-1",
-			"resources": {
-				"nodes": [_node("n1", "us-east-1a")],
-				"pods": [_pod("web-1", "web", "n1")],
-			},
-		},
-		"west": {
-			"name": "west",
-			"region": "us-west-2",
-			"resources": {
-				"nodes": [_node("n2", "us-west-2a")],
-				"pods": [_pod("web-2", "web", "n2")],
-			},
-		},
-	})
-
-	violations := k8s_az_coverage.violation with input as fixture
-	count(violations) == 0
-}
-
-# --- min_regions: app below minimum → violation ---
-
-test_min_regions_not_met if {
-	fixture := _min_region_fixture(2, {
-		"east": {
-			"name": "east",
-			"region": "us-east-1",
-			"resources": {
-				"nodes": [_node("n1", "us-east-1a")],
-				"pods": [_pod("web-1", "web", "n1")],
-			},
-		},
-	})
-
-	violations := k8s_az_coverage.violation with input as fixture
-	count(violations) == 1
-	some v, _ in violations
-	contains(v.remarks, "default/web")
-	contains(v.remarks, "1 region(s)")
-	contains(v.remarks, "covered:")
-	contains(v.remarks, "minimum required is 2")
-}
-
-# --- expected_regions: app covers required region → no violation ---
-
-test_expected_regions_met if {
-	fixture := {
-		"expected_regions": ["us-east-1", "us-west-2"],
-		"clusters": {
-			"east": {
-				"name": "east",
-				"region": "us-east-1",
-				"resources": {
-					"nodes": [_node("n1", "us-east-1a")],
-					"pods": [_pod("web-1", "web", "n1")],
-				},
-			},
-			"west": {
-				"name": "west",
-				"region": "us-west-2",
-				"resources": {
-					"nodes": [_node("n2", "us-west-2a")],
-					"pods": [_pod("web-2", "web", "n2")],
-				},
-			},
-		},
-	}
-
-	violations := k8s_az_coverage.violation with input as fixture
-	count(violations) == 0
-}
-
-# --- expected_regions: app missing required region → violation ---
-
-test_expected_regions_not_met if {
-	fixture := {
-		"expected_regions": ["us-east-1", "eu-west-1"],
-		"clusters": {
-			"east": {
-				"name": "east",
-				"region": "us-east-1",
-				"resources": {
-					"nodes": [_node("n1", "us-east-1a")],
-					"pods": [_pod("web-1", "web", "n1")],
-				},
-			},
-		},
-	}
-
-	violations := k8s_az_coverage.violation with input as fixture
-	count(violations) == 1
-	some v, _ in violations
-	contains(v.remarks, "default/web")
-	contains(v.remarks, "eu-west-1")
-}
-
-# --- Combined: expected_azs and min_regions, one fails each ---
-
-test_combined_expected_azs_and_min_regions if {
-	fixture := {
-		"expected_azs": ["us-east-1a", "us-east-1b"],
-		"min_regions": 2,
-		"clusters": {
-			"east": {
-				"name": "east",
-				"region": "us-east-1",
-				"resources": {
-					"nodes": [_node("n1", "us-east-1a")],
-					"pods": [_pod("web-1", "web", "n1")],
-				},
-			},
-		},
-	}
-
-	violations := k8s_az_coverage.violation with input as fixture
-	# web missing us-east-1b (expected_azs) AND only 1 region (min_regions=2)
-	count(violations) == 2
-}
-
-# --- Combined: both min_azs and expected_azs satisfied → no violation ---
-
-test_combined_min_and_explicit_satisfied if {
-	fixture := {
-		"expected_azs": ["us-east-1a", "us-east-1b"],
-		"min_azs": 2,
-		"clusters": {
-			"east": {
-				"name": "east",
-				"region": "us-east-1",
-				"resources": {
-					"nodes": [_node("n1", "us-east-1a"), _node("n2", "us-east-1b")],
-					"pods": [_pod("web-1", "web", "n1"), _pod("web-2", "web", "n2")],
-				},
-			},
-		},
-	}
-
-	violations := k8s_az_coverage.violation with input as fixture
-	count(violations) == 0
-}
-
-# --- expected_regions fails while min_azs and min_regions are satisfied ---
-
-test_expected_regions_fails_while_mins_pass if {
-	fixture := {
-		"min_azs": 2,
-		"min_regions": 2,
-		"expected_regions": ["eu-central-1"],
-		"clusters": {
-			"c1": {
-				"name": "c1",
-				"region": "us-east-1",
-				"resources": {
-					"nodes": [_node("n1", "us-east-1a")],
-					"pods": [_pod("web-1", "web", "n1")],
-				},
-			},
-			"c2": {
-				"name": "c2",
-				"region": "us-west-2",
-				"resources": {
-					"nodes": [_node("n2", "us-west-2a"), _node("n3", "us-west-2b")],
-					"pods": [_pod("web-2", "web", "n2"), _pod("web-3", "web", "n3")],
-				},
-			},
-		},
-	}
-
-	violations := k8s_az_coverage.violation with input as fixture
-	# web spans 3 AZs (≥2) and 2 regions (≥2) → min checks pass
-	# but eu-central-1 is not covered → expected_regions violation
-	count(violations) == 1
-	some v, _ in violations
-	contains(v.remarks, "default/web")
-	contains(v.remarks, "eu-central-1")
-}
-
-# --- expected_regions partially fails: one required region missing, mins satisfied ---
-
-test_expected_regions_one_missing_mins_satisfied if {
-	fixture := {
-		"min_azs": 2,
-		"min_regions": 2,
-		"expected_regions": ["us-east-1", "ap-southeast-1"],
-		"clusters": {
-			"c1": {
-				"name": "c1",
-				"region": "us-east-1",
-				"resources": {
-					"nodes": [_node("n1", "us-east-1a")],
-					"pods": [_pod("web-1", "web", "n1")],
-				},
-			},
-			"c2": {
-				"name": "c2",
-				"region": "eu-west-1",
-				"resources": {
-					"nodes": [_node("n2", "eu-west-1a")],
-					"pods": [_pod("web-2", "web", "n2")],
-				},
-			},
-		},
-	}
-
-	violations := k8s_az_coverage.violation with input as fixture
-	# web spans 2 AZs (≥2) and 2 regions (≥2) → min checks pass
-	# us-east-1 is covered, but ap-southeast-1 is not → 1 expected_regions violation
-	count(violations) == 1
-	some v, _ in violations
-	contains(v.remarks, "default/web")
-	contains(v.remarks, "ap-southeast-1")
-}
-
-# --- 3 clusters: 2 same region different AZs, 1 different region → all criteria met ---
-
-test_three_clusters_two_regions_all_criteria_met if {
-	fixture := {
-		"min_azs": 2,
-		"min_regions": 2,
-		"expected_regions": ["us-east-1"],
-		"clusters": {
-			"c1": {
-				"name": "c1",
-				"region": "us-east-1",
-				"resources": {
-					"nodes": [_node("n1", "us-east-1a")],
-					"pods": [_pod("web-1", "web", "n1")],
-				},
-			},
-			"c2": {
-				"name": "c2",
-				"region": "us-east-1",
-				"resources": {
-					"nodes": [_node("n2", "us-east-1b")],
-					"pods": [_pod("web-2", "web", "n2")],
-				},
-			},
-			"c3": {
-				"name": "c3",
-				"region": "eu-west-1",
-				"resources": {
-					"nodes": [_node("n3", "eu-west-1a")],
-					"pods": [_pod("web-3", "web", "n3")],
-				},
-			},
-		},
-	}
-
-	violations := k8s_az_coverage.violation with input as fixture
-	# web: 3 AZs (≥2), 2 regions (≥2), present in us-east-1 → no violations
-	count(violations) == 0
-}
-
-# --- 10 clusters, app only in 3 → min checks pass on covered AZs/regions, empty clusters are invisible ---
-
-test_ten_clusters_app_in_three_passes_min_checks if {
-	fixture := {
-		"min_azs": 2,
-		"min_regions": 2,
-		"expected_regions": ["us-east-1"],
-		"clusters": {
-			"c1":  {"name": "c1",  "region": "us-east-1",      "resources": {"nodes": [_node("n1",  "us-east-1a")],      "pods": [_pod("web-1", "web", "n1")]}},
-			"c2":  {"name": "c2",  "region": "us-east-1",      "resources": {"nodes": [_node("n2",  "us-east-1b")],      "pods": [_pod("web-2", "web", "n2")]}},
-			"c3":  {"name": "c3",  "region": "eu-west-1",      "resources": {"nodes": [_node("n3",  "eu-west-1a")],      "pods": [_pod("web-3", "web", "n3")]}},
-			"c4":  {"name": "c4",  "region": "ap-southeast-1", "resources": {"nodes": [_node("n4",  "ap-southeast-1a")], "pods": []}},
-			"c5":  {"name": "c5",  "region": "ap-southeast-1", "resources": {"nodes": [_node("n5",  "ap-southeast-1b")], "pods": []}},
-			"c6":  {"name": "c6",  "region": "us-west-2",      "resources": {"nodes": [_node("n6",  "us-west-2a")],      "pods": []}},
-			"c7":  {"name": "c7",  "region": "us-west-2",      "resources": {"nodes": [_node("n7",  "us-west-2b")],      "pods": []}},
-			"c8":  {"name": "c8",  "region": "eu-central-1",   "resources": {"nodes": [_node("n8",  "eu-central-1a")],   "pods": []}},
-			"c9":  {"name": "c9",  "region": "eu-central-1",   "resources": {"nodes": [_node("n9",  "eu-central-1b")],   "pods": []}},
-			"c10": {"name": "c10", "region": "sa-east-1",      "resources": {"nodes": [_node("n10", "sa-east-1a")],      "pods": []}},
-		},
-	}
-
-	violations := k8s_az_coverage.violation with input as fixture
-	# web spans 3 AZs and 2 regions across the 3 clusters it's deployed in.
-	# The 7 empty clusters are not visible to the policy — min checks pass.
-	count(violations) == 0
 }
