@@ -449,24 +449,24 @@ test_failure_messages_include_observed_az_and_region_counts if {
 		),
 	}
 	fixture := _input(main, _subject("kind-a", "app", "web", "web"), clusters, {"min_azs": 3, "min_regions": 2})
- 
+
 	raw_violations := k8s_az_coverage.violation with input as fixture
 	violations := [v.remarks |
 		some v, _ in raw_violations
 	]
- 	description := k8s_az_coverage.description with input as fixture
- 
- 	count(violations) == 2
- 	some v in violations
- 	contains(v, "current AZs: local-a - seen twice, local-b - seen once")
- 	some region_violation in violations
- 	contains(region_violation, "current regions: local - seen in 2 clusters")
- 	contains(description, "only 2/3 AZs (current AZs: local-a - seen twice, local-b - seen once)")
- 	contains(description, "only 1/2 regions (current regions: local - seen in 2 clusters)")
- }
+	description := k8s_az_coverage.description with input as fixture
 
- test_subject_identity_label_fallback_if_main_is_missing_metadata_label if {
- 	main := {"metadata": {"name": "web", "namespace": "app"}}
+	count(violations) == 2
+	some v in violations
+	contains(v, "current AZs: local-a - seen twice, local-b - seen once")
+	some region_violation in violations
+	contains(region_violation, "current regions: local - seen in 2 clusters")
+	contains(description, "only 2/3 AZs (current AZs: local-a - seen twice, local-b - seen once)")
+	contains(description, "only 1/2 regions (current regions: local - seen in 2 clusters)")
+}
+
+test_subject_identity_label_fallback_if_main_is_missing_metadata_label if {
+	main := {"metadata": {"name": "web", "namespace": "app"}}
 	clusters := {
 		"prod": _cluster("prod", "us-east-1",
 			[_node("n1", "us-east-1a"), _node("n2", "us-east-1b")],
@@ -519,6 +519,8 @@ test_empty_cluster_data if {
 	count(violations) == 1
 	some v, _ in violations
 	v.remarks == "No cluster data available"
+	description := k8s_az_coverage.description with input as fixture
+	contains(description, "No cluster data available")
 }
 
 test_title if {

@@ -384,6 +384,7 @@ _has_criteria if {
 
 # Violation: current app missing from an explicitly required AZ
 violation[{"remarks": msg}] if {
+	count(_clusters) > 0
 	count(_expected_azs) > 0
 	some az in _missing_expected_azs
 	msg := sprintf("App %q has no pods in required AZ %s across any cluster (current AZs: %s)", [_evaluated_app_id, az, _current_app_az_count_summary])
@@ -391,6 +392,7 @@ violation[{"remarks": msg}] if {
 
 # Violation: current app missing from an explicitly required region
 violation[{"remarks": msg}] if {
+	count(_clusters) > 0
 	count(_expected_regions) > 0
 	some region in _missing_expected_regions
 	msg := sprintf("App %q has no pods in required region %s across any cluster (current regions: %s)", [_evaluated_app_id, region, _current_app_region_count_summary])
@@ -398,6 +400,7 @@ violation[{"remarks": msg}] if {
 
 # Violation: current app does not meet minimum AZ count
 violation[{"remarks": msg}] if {
+	count(_clusters) > 0
 	_min_azs > 0
 	count(_current_app_azs) < _min_azs
 	msg := sprintf("App %q spans only %d AZ(s) across all clusters (current AZs: %s), minimum required is %d", [_evaluated_app_id, count(_current_app_azs), _current_app_az_count_summary, _min_azs])
@@ -405,6 +408,7 @@ violation[{"remarks": msg}] if {
 
 # Violation: current app does not meet minimum region count
 violation[{"remarks": msg}] if {
+	count(_clusters) > 0
 	_min_regions > 0
 	count(_current_app_regions) < _min_regions
 	msg := sprintf("App %q spans only %d region(s) across all clusters (current regions: %s), minimum required is %d", [_evaluated_app_id, count(_current_app_regions), _current_app_region_count_summary, _min_regions])
@@ -436,24 +440,28 @@ violation[{"remarks": "No cluster data available"}] if {
 
 # Current app failing expected_azs check
 _failed_apps_expected_azs := {_evaluated_app_id |
+	count(_clusters) > 0
 	count(_expected_azs) > 0
 	count(_missing_expected_azs) > 0
 }
 
 # Current app failing expected_regions check
 _failed_apps_expected_regions := {_evaluated_app_id |
+	count(_clusters) > 0
 	count(_expected_regions) > 0
 	count(_missing_expected_regions) > 0
 }
 
 # Current app failing min_azs check
 _failed_apps_min_azs := {_evaluated_app_id |
+	count(_clusters) > 0
 	_min_azs > 0
 	count(_current_app_azs) < _min_azs
 }
 
 # Current app failing min_regions check
 _failed_apps_min_regions := {_evaluated_app_id |
+	count(_clusters) > 0
 	_min_regions > 0
 	count(_current_app_regions) < _min_regions
 }
@@ -463,6 +471,7 @@ _failed_apps := _failed_apps_expected_azs | _failed_apps_expected_regions | _fai
 
 # Build detailed failure list
 _failure_details := concat("\n", [msg |
+	count(_clusters) > 0
 	some app_id in _failed_apps
 	az_parts := [s | count(_missing_expected_azs) > 0; s := sprintf("missing required AZs: %s (current AZs: %s)", [concat(", ", _missing_expected_azs), _current_app_az_count_summary])]
 	region_parts := [s | count(_missing_expected_regions) > 0; s := sprintf("missing required regions: %s (current regions: %s)", [concat(", ", _missing_expected_regions), _current_app_region_count_summary])]
@@ -473,12 +482,18 @@ _failure_details := concat("\n", [msg |
 	msg := sprintf("  %s = %s", [app_id, concat("; ", parts)])
 ])
 
-_failed_check_count := count([1 | count(_missing_expected_azs) > 0]) + count([1 | count(_missing_expected_regions) > 0]) + count([1 | _min_azs > 0; count(_current_app_azs) < _min_azs]) + count([1 | _min_regions > 0; count(_current_app_regions) < _min_regions])
+_failed_check_count := count([1 | count(_clusters) > 0; count(_missing_expected_azs) > 0]) + count([1 | count(_clusters) > 0; count(_missing_expected_regions) > 0]) + count([1 | count(_clusters) > 0; _min_azs > 0; count(_current_app_azs) < _min_azs]) + count([1 | count(_clusters) > 0; _min_regions > 0; count(_current_app_regions) < _min_regions])
 
 title := sprintf("AZ checks for k8s deployment %s/%s/%s", [object.get(_subject, "cluster_name", object.get(object.get(object.get(input, "context", {}), "cluster", {}), "name", "")), _current_namespace, _resource_name(object.get(input, "main", {}))])
 
+description := sprintf("Evaluated AZ/region coverage for deployment %q across %d cluster(s).\nNo cluster data available",
+	[_evaluated_app_id, count(_clusters)]) if {
+	count(_clusters) == 0
+}
+
 description := sprintf("Evaluated AZ/region coverage for deployment %q across %d cluster(s).\nFailed checks: %d",
 	[_evaluated_app_id, count(_clusters), _failed_check_count]) if {
+	count(_clusters) > 0
 	count(_failed_apps) == 0
 }
 
@@ -487,5 +502,6 @@ description := concat("", [
 	sprintf("Failed checks: %d\n", [_failed_check_count]),
 	_failure_details,
 ]) if {
+	count(_clusters) > 0
 	count(_failed_apps) > 0
 }
