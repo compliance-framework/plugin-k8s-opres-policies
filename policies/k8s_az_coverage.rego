@@ -2,45 +2,41 @@ package compliance_framework.k8s_az_coverage
 
 import rego.v1
 
-risk_templates := [
-	{
-		"name": "Application may be non-resilient due to insufficient multi-AZ or multi-region coverage",
-		"title": "Application {{ .namespace }}/{{ .app_name }} may be non-resilient due to insufficient multi-AZ or multi-region coverage",
-		"statement": "Application {{ .namespace }}/{{ .app_name }} is not distributed across the required availability zones or regions and may be unable to tolerate node, zone, or regional failures. Concentrating replicas in too few failure domains increases the likelihood of service disruption, degraded availability, and delayed recovery during infrastructure incidents or maintenance events.",
-		"likelihood_hint": "moderate",
-		"impact_hint": "high",
-		"dedupe_label_keys": ["namespace", "app_name"],
-		"label_schema": [
-			{
-				"key": "namespace",
-				"description": "Kubernetes namespace containing the application"
-			},
-			{
-				"key": "app_name",
-				"description": "Logical application name derived from workload identity labels"
-			}
+risk_templates := [{
+	"name": "Application may be non-resilient due to insufficient multi-AZ or multi-region coverage",
+	"title": "Application {{ .namespace }}/{{ .app_name }} may be non-resilient due to insufficient multi-AZ or multi-region coverage",
+	"statement": "Application {{ .namespace }}/{{ .app_name }} is not distributed across the required availability zones or regions and may be unable to tolerate node, zone, or regional failures. Concentrating replicas in too few failure domains increases the likelihood of service disruption, degraded availability, and delayed recovery during infrastructure incidents or maintenance events.",
+	"likelihood_hint": "moderate",
+	"impact_hint": "high",
+	"dedupe_label_keys": ["namespace", "app_name"],
+	"label_schema": [
+		{
+			"key": "namespace",
+			"description": "Kubernetes namespace containing the application",
+		},
+		{
+			"key": "app_name",
+			"description": "Logical application name derived from workload identity labels",
+		},
+	],
+	"threat_refs": [{
+		"system": "https://cwe.mitre.org",
+		"external_id": "CWE-693",
+		"title": "Protection Mechanism Failure",
+		"url": "https://cwe.mitre.org/data/definitions/693.html",
+	}],
+	"remediation": {
+		"title": "Distribute application replicas across independent failure domains",
+		"description": "Update workload scheduling and capacity so the application spans the required availability zones and, where required, regions. Ensure node labels, topology constraints, anti-affinity rules, and cluster capacity all support resilient placement.",
+		"tasks": [
+			{"title": "Configure topology spread constraints or pod anti-affinity so replicas are distributed across availability zones"},
+			{"title": "Verify each target cluster has schedulable capacity in every required availability zone"},
+			{"title": "Ensure nodes are labeled consistently with topology.kubernetes.io/zone and topology.kubernetes.io/region"},
+			{"title": "Deploy the application into additional clusters or regions when regional resilience requirements apply"},
+			{"title": "Validate failover behavior by testing zone or regional disruption scenarios"},
 		],
-		"threat_refs": [
-			{
-				"system": "https://cwe.mitre.org",
-				"external_id": "CWE-693",
-				"title": "Protection Mechanism Failure",
-				"url": "https://cwe.mitre.org/data/definitions/693.html"
-			}
-		],
-		"remediation": {
-			"title": "Distribute application replicas across independent failure domains",
-			"description": "Update workload scheduling and capacity so the application spans the required availability zones and, where required, regions. Ensure node labels, topology constraints, anti-affinity rules, and cluster capacity all support resilient placement.",
-			"tasks": [
-				{"title": "Configure topology spread constraints or pod anti-affinity so replicas are distributed across availability zones"},
-				{"title": "Verify each target cluster has schedulable capacity in every required availability zone"},
-				{"title": "Ensure nodes are labeled consistently with topology.kubernetes.io/zone and topology.kubernetes.io/region"},
-				{"title": "Deploy the application into additional clusters or regions when regional resilience requirements apply"},
-				{"title": "Validate failover behavior by testing zone or regional disruption scenarios"}
-			]
-		}
-	}
-]
+	},
+}]
 
 # --- Configuration from policy_input ---
 
@@ -91,7 +87,6 @@ _resource_label_value(resource, key) := value if {
 	value := object.get(labels, key, "")
 	value != ""
 }
-
 
 _resource_metadata_label_value(resource, key) if {
 	labels := object.get(object.get(resource, "metadata", {}), "labels", {})
@@ -431,8 +426,10 @@ violation[{"remarks": msg}] if {
 	node_name := object.get(object.get(pod, "spec", {}), "nodeName", "")
 	node_name != ""
 	not _node_az[cluster_name][node_name]
-	msg := sprintf("Cluster %q: pod %q (app=%s) on node %q has no AZ label",
-		[cluster_name, pod.metadata.name, _evaluated_app_id, node_name])
+	msg := sprintf(
+		"Cluster %q: pod %q (app=%s) on node %q has no AZ label",
+		[cluster_name, pod.metadata.name, _evaluated_app_id, node_name],
+	)
 }
 
 # Violation: no compliance criteria configured
@@ -477,7 +474,7 @@ _failed_apps_min_regions := {_evaluated_app_id |
 }
 
 # Union of all failed apps across all criteria
-_failed_apps := _failed_apps_expected_azs | _failed_apps_expected_regions | _failed_apps_min_azs | _failed_apps_min_regions
+_failed_apps := ((_failed_apps_expected_azs | _failed_apps_expected_regions) | _failed_apps_min_azs) | _failed_apps_min_regions
 
 # Build detailed failure list
 _failure_details := concat("\n", [msg |
@@ -492,17 +489,21 @@ _failure_details := concat("\n", [msg |
 	msg := sprintf("  %s = %s", [app_id, concat("; ", parts)])
 ])
 
-_failed_check_count := count([1 | count(_clusters) > 0; count(_missing_expected_azs) > 0]) + count([1 | count(_clusters) > 0; count(_missing_expected_regions) > 0]) + count([1 | count(_clusters) > 0; _min_azs > 0; count(_current_app_azs) < _min_azs]) + count([1 | count(_clusters) > 0; _min_regions > 0; count(_current_app_regions) < _min_regions])
+_failed_check_count := ((count([1 | count(_clusters) > 0; count(_missing_expected_azs) > 0]) + count([1 | count(_clusters) > 0; count(_missing_expected_regions) > 0])) + count([1 | count(_clusters) > 0; _min_azs > 0; count(_current_app_azs) < _min_azs])) + count([1 | count(_clusters) > 0; _min_regions > 0; count(_current_app_regions) < _min_regions])
 
 title := sprintf("AZ checks for k8s deployment %s/%s/%s", [object.get(_subject, "cluster_name", object.get(object.get(object.get(input, "context", {}), "cluster", {}), "name", "")), _current_namespace, _resource_name(object.get(input, "main", {}))])
 
-description := sprintf("Evaluated AZ/region coverage for deployment %q across %d cluster(s).\nNo cluster data available",
-	[_evaluated_app_id, count(_clusters)]) if {
+description := sprintf(
+	"Evaluated AZ/region coverage for deployment %q across %d cluster(s).\nNo cluster data available",
+	[_evaluated_app_id, count(_clusters)],
+) if {
 	count(_clusters) == 0
 }
 
-description := sprintf("Evaluated AZ/region coverage for deployment %q across %d cluster(s).\nFailed checks: %d",
-	[_evaluated_app_id, count(_clusters), _failed_check_count]) if {
+description := sprintf(
+	"Evaluated AZ/region coverage for deployment %q across %d cluster(s).\nFailed checks: %d",
+	[_evaluated_app_id, count(_clusters), _failed_check_count],
+) if {
 	count(_clusters) > 0
 	count(_failed_apps) == 0
 }

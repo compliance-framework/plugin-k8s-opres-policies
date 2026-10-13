@@ -27,13 +27,7 @@ _deployment(name, namespace, app) := {
 		"namespace": namespace,
 		"labels": {"app.kubernetes.io/name": app},
 	},
-	"spec": {
-		"template": {
-			"metadata": {
-				"labels": {"app.kubernetes.io/name": app},
-			},
-		},
-	},
+	"spec": {"template": {"metadata": {"labels": {"app.kubernetes.io/name": app}}}},
 }
 
 _deployment_with_selector(name, namespace, selector_labels) := {
@@ -42,14 +36,8 @@ _deployment_with_selector(name, namespace, selector_labels) := {
 		"namespace": namespace,
 	},
 	"spec": {
-		"selector": {
-			"matchLabels": selector_labels,
-		},
-		"template": {
-			"metadata": {
-				"labels": selector_labels,
-			},
-		},
+		"selector": {"matchLabels": selector_labels},
+		"template": {"metadata": {"labels": selector_labels}},
 	},
 }
 
@@ -59,14 +47,8 @@ _deployment_with_match_expressions(name, namespace, match_expressions, template_
 		"namespace": namespace,
 	},
 	"spec": {
-		"selector": {
-			"matchExpressions": match_expressions,
-		},
-		"template": {
-			"metadata": {
-				"labels": template_labels,
-			},
-		},
+		"selector": {"matchExpressions": match_expressions},
+		"template": {"metadata": {"labels": template_labels}},
 	},
 }
 
@@ -75,13 +57,7 @@ _deployment_template_only(name, namespace, app) := {
 		"name": name,
 		"namespace": namespace,
 	},
-	"spec": {
-		"template": {
-			"metadata": {
-				"labels": {"app.kubernetes.io/name": app},
-			},
-		},
-	},
+	"spec": {"template": {"metadata": {"labels": {"app.kubernetes.io/name": app}}}},
 }
 
 _deployment_with_label(name, namespace, label_key, label_value) := {
@@ -90,13 +66,7 @@ _deployment_with_label(name, namespace, label_key, label_value) := {
 		"namespace": namespace,
 		"labels": {label_key: label_value},
 	},
-	"spec": {
-		"template": {
-			"metadata": {
-				"labels": {label_key: label_value},
-			},
-		},
-	},
+	"spec": {"template": {"metadata": {"labels": {label_key: label_value}}}},
 }
 
 _cluster(name, region, nodes, pods, deployments) := {
@@ -118,29 +88,29 @@ _subject(cluster_name, namespace, name, app_name) := {
 	"namespace": namespace,
 	"name": name,
 	"identifier": sprintf("k8s-deployments/%s/%s/%s", [cluster_name, namespace, name]),
-	"identity_labels": {
-		"app_name": app_name,
-	},
+	"identity_labels": {"app_name": app_name},
 }
 
-_input(main, subject, clusters, extra) := object.union({
-	"schema_version": "v2",
-	"source": "plugin-kubernetes",
-	"main": main,
-	"subject": subject,
-	"context": object.get(clusters, object.get(subject, "cluster_name", ""), {"cluster": {}, "resources": {}}),
-	"fleet": {"clusters": clusters},
-}, extra)
+_input(main, subject, clusters, extra) := object.union(
+	{
+		"schema_version": "v2",
+		"source": "plugin-kubernetes",
+		"main": main,
+		"subject": subject,
+		"context": object.get(clusters, object.get(subject, "cluster_name", ""), {"cluster": {}, "resources": {}}),
+		"fleet": {"clusters": clusters},
+	},
+	extra,
+)
 
 test_app_missing_from_expected_az_if_deployment_subject if {
 	main := _deployment("web", "app", "web")
-	clusters := {
-		"prod": _cluster("prod", "us-east-1",
-			[_node("n1", "us-east-1a"), _node("n2", "us-east-1b")],
-			[_pod("web-1", "app", "web", "n1"), _pod("web-2", "app", "web", "n2")],
-			[main],
-		),
-	}
+	clusters := {"prod": _cluster(
+		"prod", "us-east-1",
+		[_node("n1", "us-east-1a"), _node("n2", "us-east-1b")],
+		[_pod("web-1", "app", "web", "n1"), _pod("web-2", "app", "web", "n2")],
+		[main],
+	)}
 	fixture := _input(main, _subject("prod", "app", "web", "web"), clusters, {"expected_azs": ["us-east-1a", "us-east-1b", "us-east-1c"]})
 
 	violations := k8s_az_coverage.violation with input as fixture
@@ -152,13 +122,12 @@ test_app_missing_from_expected_az_if_deployment_subject if {
 
 test_app_covers_all_expected_azs_if_deployment_subject if {
 	main := _deployment("web", "app", "web")
-	clusters := {
-		"prod": _cluster("prod", "us-east-1",
-			[_node("n1", "us-east-1a"), _node("n2", "us-east-1b"), _node("n3", "us-east-1c")],
-			[_pod("web-1", "app", "web", "n1"), _pod("web-2", "app", "web", "n2"), _pod("web-3", "app", "web", "n3")],
-			[main],
-		),
-	}
+	clusters := {"prod": _cluster(
+		"prod", "us-east-1",
+		[_node("n1", "us-east-1a"), _node("n2", "us-east-1b"), _node("n3", "us-east-1c")],
+		[_pod("web-1", "app", "web", "n1"), _pod("web-2", "app", "web", "n2"), _pod("web-3", "app", "web", "n3")],
+		[main],
+	)}
 	fixture := _input(main, _subject("prod", "app", "web", "web"), clusters, {"expected_azs": ["us-east-1a", "us-east-1b", "us-east-1c"]})
 
 	violations := k8s_az_coverage.violation with input as fixture
@@ -167,24 +136,23 @@ test_app_covers_all_expected_azs_if_deployment_subject if {
 
 test_many_pods_same_namespace_are_evaluated_as_one_app if {
 	main := _deployment("web", "app", "web")
-	clusters := {
-		"prod": _cluster("prod", "us-east-1",
-			[_node("n1", "us-east-1a"), _node("n2", "us-east-1b"), _node("n3", "us-east-1c")],
-			[
-				_pod("web-1", "app", "web", "n1"),
-				_pod("web-2", "app", "web", "n1"),
-				_pod("web-3", "app", "web", "n1"),
-				_pod("web-4", "app", "web", "n2"),
-				_pod("web-5", "app", "web", "n2"),
-				_pod("web-6", "app", "web", "n2"),
-				_pod("web-7", "app", "web", "n3"),
-				_pod("web-8", "app", "web", "n3"),
-				_pod("web-9", "app", "web", "n3"),
-				_pod("web-10", "app", "web", "n3"),
-			],
-			[main],
-		),
-	}
+	clusters := {"prod": _cluster(
+		"prod", "us-east-1",
+		[_node("n1", "us-east-1a"), _node("n2", "us-east-1b"), _node("n3", "us-east-1c")],
+		[
+			_pod("web-1", "app", "web", "n1"),
+			_pod("web-2", "app", "web", "n1"),
+			_pod("web-3", "app", "web", "n1"),
+			_pod("web-4", "app", "web", "n2"),
+			_pod("web-5", "app", "web", "n2"),
+			_pod("web-6", "app", "web", "n2"),
+			_pod("web-7", "app", "web", "n3"),
+			_pod("web-8", "app", "web", "n3"),
+			_pod("web-9", "app", "web", "n3"),
+			_pod("web-10", "app", "web", "n3"),
+		],
+		[main],
+	)}
 	fixture := _input(main, _subject("prod", "app", "web", "web"), clusters, {"min_azs": 3})
 
 	violations := k8s_az_coverage.violation with input as fixture
@@ -193,17 +161,16 @@ test_many_pods_same_namespace_are_evaluated_as_one_app if {
 
 test_current_deployment_ignores_other_apps if {
 	main := _deployment("web", "app", "web")
-	clusters := {
-		"prod": _cluster("prod", "us-east-1",
-			[_node("n1", "us-east-1a"), _node("n2", "us-east-1b")],
-			[
-				_pod("web-1", "app", "web", "n1"),
-				_pod("web-2", "app", "web", "n2"),
-				_pod("api-1", "app", "api", "n1"),
-			],
-			[main, _deployment("api", "app", "api")],
-		),
-	}
+	clusters := {"prod": _cluster(
+		"prod", "us-east-1",
+		[_node("n1", "us-east-1a"), _node("n2", "us-east-1b")],
+		[
+			_pod("web-1", "app", "web", "n1"),
+			_pod("web-2", "app", "web", "n2"),
+			_pod("api-1", "app", "api", "n1"),
+		],
+		[main, _deployment("api", "app", "api")],
+	)}
 	fixture := _input(main, _subject("prod", "app", "web", "web"), clusters, {"expected_azs": ["us-east-1a", "us-east-1b"]})
 
 	violations := k8s_az_coverage.violation with input as fixture
@@ -212,18 +179,15 @@ test_current_deployment_ignores_other_apps if {
 
 test_deployment_selector_matches_pods_without_app_name_label if {
 	main := _deployment_with_selector("coredns", "kube-system", {"k8s-app": "kube-dns"})
-	clusters := {
-		"kind": _cluster("kind", "local",
-			[_node("kind-control-plane", "us-west-1a")],
-			[
-				{
-					"metadata": {"name": "coredns-1", "namespace": "kube-system", "labels": {"k8s-app": "kube-dns"}},
-					"spec": {"nodeName": "kind-control-plane"},
-				},
-			],
-			[main],
-		),
-	}
+	clusters := {"kind": _cluster(
+		"kind", "local",
+		[_node("kind-control-plane", "us-west-1a")],
+		[{
+			"metadata": {"name": "coredns-1", "namespace": "kube-system", "labels": {"k8s-app": "kube-dns"}},
+			"spec": {"nodeName": "kind-control-plane"},
+		}],
+		[main],
+	)}
 	fixture := _input(main, _subject("kind", "kube-system", "coredns", "coredns"), clusters, {"min_azs": 1})
 
 	violations := k8s_az_coverage.violation with input as fixture
@@ -237,18 +201,15 @@ test_deployment_selector_match_expressions_match_pods if {
 		[{"key": "tier", "operator": "In", "values": ["frontend"]}],
 		{"tier": "frontend"},
 	)
-	clusters := {
-		"prod": _cluster("prod", "us-east-1",
-			[_node("n1", "us-east-1a")],
-			[
-				{
-					"metadata": {"name": "api-1", "namespace": "app", "labels": {"tier": "frontend"}},
-					"spec": {"nodeName": "n1"},
-				},
-			],
-			[main],
-		),
-	}
+	clusters := {"prod": _cluster(
+		"prod", "us-east-1",
+		[_node("n1", "us-east-1a")],
+		[{
+			"metadata": {"name": "api-1", "namespace": "app", "labels": {"tier": "frontend"}},
+			"spec": {"nodeName": "n1"},
+		}],
+		[main],
+	)}
 	fixture := _input(main, _subject("prod", "app", "api", "api"), clusters, {"min_azs": 1})
 
 	violations := k8s_az_coverage.violation with input as fixture
@@ -262,22 +223,21 @@ test_deployment_selector_match_expressions_notin_requires_present_key if {
 		[{"key": "tier", "operator": "NotIn", "values": ["frontend"]}],
 		{"tier": "backend"},
 	)
-	clusters := {
-		"prod": _cluster("prod", "us-east-1",
-			[_node("n1", "us-east-1a"), _node("n2", "us-east-1b")],
-			[
-				{
-					"metadata": {"name": "api-1", "namespace": "app", "labels": {"tier": "backend", "app.kubernetes.io/name": "api"}},
-					"spec": {"nodeName": "n1"},
-				},
-				{
-					"metadata": {"name": "api-2", "namespace": "app", "labels": {"app.kubernetes.io/name": "api"}},
-					"spec": {"nodeName": "n2"},
-				},
-			],
-			[main],
-		),
-	}
+	clusters := {"prod": _cluster(
+		"prod", "us-east-1",
+		[_node("n1", "us-east-1a"), _node("n2", "us-east-1b")],
+		[
+			{
+				"metadata": {"name": "api-1", "namespace": "app", "labels": {"tier": "backend", "app.kubernetes.io/name": "api"}},
+				"spec": {"nodeName": "n1"},
+			},
+			{
+				"metadata": {"name": "api-2", "namespace": "app", "labels": {"app.kubernetes.io/name": "api"}},
+				"spec": {"nodeName": "n2"},
+			},
+		],
+		[main],
+	)}
 	fixture := _input(main, _subject("prod", "app", "api", "api"), clusters, {"expected_azs": ["us-east-1a", "us-east-1b"]})
 
 	raw_violations := k8s_az_coverage.violation with input as fixture
@@ -296,18 +256,15 @@ test_deployment_selector_match_expressions_exists_matches_pods if {
 		[{"key": "tier", "operator": "Exists"}],
 		{"tier": "frontend"},
 	)
-	clusters := {
-		"prod": _cluster("prod", "us-east-1",
-			[_node("n1", "us-east-1a")],
-			[
-				{
-					"metadata": {"name": "api-1", "namespace": "app", "labels": {"tier": "frontend"}},
-					"spec": {"nodeName": "n1"},
-				},
-			],
-			[main],
-		),
-	}
+	clusters := {"prod": _cluster(
+		"prod", "us-east-1",
+		[_node("n1", "us-east-1a")],
+		[{
+			"metadata": {"name": "api-1", "namespace": "app", "labels": {"tier": "frontend"}},
+			"spec": {"nodeName": "n1"},
+		}],
+		[main],
+	)}
 	fixture := _input(main, _subject("prod", "app", "api", "api"), clusters, {"min_azs": 1})
 
 	violations := k8s_az_coverage.violation with input as fixture
@@ -321,18 +278,15 @@ test_deployment_selector_match_expressions_doesnotexist_matches_pods if {
 		[{"key": "deprecated", "operator": "DoesNotExist"}],
 		{"app.kubernetes.io/name": "api"},
 	)
-	clusters := {
-		"prod": _cluster("prod", "us-east-1",
-			[_node("n1", "us-east-1a")],
-			[
-				{
-					"metadata": {"name": "api-1", "namespace": "app", "labels": {"app.kubernetes.io/name": "api"}},
-					"spec": {"nodeName": "n1"},
-				},
-			],
-			[main],
-		),
-	}
+	clusters := {"prod": _cluster(
+		"prod", "us-east-1",
+		[_node("n1", "us-east-1a")],
+		[{
+			"metadata": {"name": "api-1", "namespace": "app", "labels": {"app.kubernetes.io/name": "api"}},
+			"spec": {"nodeName": "n1"},
+		}],
+		[main],
+	)}
 	fixture := _input(main, _subject("prod", "app", "api", "api"), clusters, {"min_azs": 1})
 
 	violations := k8s_az_coverage.violation with input as fixture
@@ -341,22 +295,21 @@ test_deployment_selector_match_expressions_doesnotexist_matches_pods if {
 
 test_selector_workloads_do_not_fall_back_to_app_label_matching if {
 	main := _deployment_with_selector("web", "app", {"component": "web"})
-	clusters := {
-		"prod": _cluster("prod", "us-east-1",
-			[_node("n1", "us-east-1a"), _node("n2", "us-east-1b")],
-			[
-				{
-					"metadata": {"name": "web-selected", "namespace": "app", "labels": {"component": "web", "app.kubernetes.io/name": "web"}},
-					"spec": {"nodeName": "n1"},
-				},
-				{
-					"metadata": {"name": "web-unrelated", "namespace": "app", "labels": {"component": "other", "app.kubernetes.io/name": "web"}},
-					"spec": {"nodeName": "n2"},
-				},
-			],
-			[main],
-		),
-	}
+	clusters := {"prod": _cluster(
+		"prod", "us-east-1",
+		[_node("n1", "us-east-1a"), _node("n2", "us-east-1b")],
+		[
+			{
+				"metadata": {"name": "web-selected", "namespace": "app", "labels": {"component": "web", "app.kubernetes.io/name": "web"}},
+				"spec": {"nodeName": "n1"},
+			},
+			{
+				"metadata": {"name": "web-unrelated", "namespace": "app", "labels": {"component": "other", "app.kubernetes.io/name": "web"}},
+				"spec": {"nodeName": "n2"},
+			},
+		],
+		[main],
+	)}
 	fixture := _input(main, _subject("prod", "app", "web", "web"), clusters, {"expected_azs": ["us-east-1a", "us-east-1b"]})
 
 	violations := k8s_az_coverage.violation with input as fixture
@@ -367,13 +320,12 @@ test_selector_workloads_do_not_fall_back_to_app_label_matching if {
 
 test_pod_on_node_without_az_label if {
 	main := _deployment("web", "app", "web")
-	clusters := {
-		"prod": _cluster("prod", "us-east-1",
-			[_node("n1", "us-east-1a"), _node_no_az("n2")],
-			[_pod("web-1", "app", "web", "n1"), _pod("web-2", "app", "web", "n2")],
-			[main],
-		),
-	}
+	clusters := {"prod": _cluster(
+		"prod", "us-east-1",
+		[_node("n1", "us-east-1a"), _node_no_az("n2")],
+		[_pod("web-1", "app", "web", "n1"), _pod("web-2", "app", "web", "n2")],
+		[main],
+	)}
 	fixture := _input(main, _subject("prod", "app", "web", "web"), clusters, {"expected_azs": ["us-east-1a"]})
 
 	violations := k8s_az_coverage.violation with input as fixture
@@ -385,13 +337,12 @@ test_pod_on_node_without_az_label if {
 
 test_custom_app_label if {
 	main := _deployment_with_label("backend", "app", "team", "backend")
-	clusters := {
-		"prod": _cluster("prod", "us-east-1",
-			[_node("n1", "us-east-1a"), _node("n2", "us-east-1b")],
-			[_pod_with_label("svc-1", "app", "team", "backend", "n1"), _pod_with_label("svc-2", "app", "team", "backend", "n2")],
-			[main],
-		),
-	}
+	clusters := {"prod": _cluster(
+		"prod", "us-east-1",
+		[_node("n1", "us-east-1a"), _node("n2", "us-east-1b")],
+		[_pod_with_label("svc-1", "app", "team", "backend", "n1"), _pod_with_label("svc-2", "app", "team", "backend", "n2")],
+		[main],
+	)}
 	fixture := _input(main, _subject("prod", "app", "backend", "backend"), clusters, {"app_label": "team", "expected_azs": ["us-east-1a", "us-east-1b"]})
 
 	violations := k8s_az_coverage.violation with input as fixture
@@ -400,13 +351,12 @@ test_custom_app_label if {
 
 test_legacy_label_fallback if {
 	main := _deployment("web", "app", "web")
-	clusters := {
-		"prod": _cluster("prod", "us-east-1",
-			[_node_legacy("n1", "us-east-1a"), _node_legacy("n2", "us-east-1b")],
-			[_pod("web-1", "app", "web", "n1"), _pod("web-2", "app", "web", "n2")],
-			[main],
-		),
-	}
+	clusters := {"prod": _cluster(
+		"prod", "us-east-1",
+		[_node_legacy("n1", "us-east-1a"), _node_legacy("n2", "us-east-1b")],
+		[_pod("web-1", "app", "web", "n1"), _pod("web-2", "app", "web", "n2")],
+		[main],
+	)}
 	fixture := _input(main, _subject("prod", "app", "web", "web"), clusters, {"expected_azs": ["us-east-1a", "us-east-1b"]})
 
 	violations := k8s_az_coverage.violation with input as fixture
@@ -415,16 +365,15 @@ test_legacy_label_fallback if {
 
 test_legacy_label_fallback_when_current_zone_label_is_empty if {
 	main := _deployment("web", "app", "web")
-	clusters := {
-		"prod": _cluster("prod", "us-east-1",
-			[
-				{"metadata": {"name": "n1", "labels": {"topology.kubernetes.io/zone": "", "failure-domain.beta.kubernetes.io/zone": "us-east-1a"}}},
-				{"metadata": {"name": "n2", "labels": {"topology.kubernetes.io/zone": "", "failure-domain.beta.kubernetes.io/zone": "us-east-1b"}}},
-			],
-			[_pod("web-1", "app", "web", "n1"), _pod("web-2", "app", "web", "n2")],
-			[main],
-		),
-	}
+	clusters := {"prod": _cluster(
+		"prod", "us-east-1",
+		[
+			{"metadata": {"name": "n1", "labels": {"topology.kubernetes.io/zone": "", "failure-domain.beta.kubernetes.io/zone": "us-east-1a"}}},
+			{"metadata": {"name": "n2", "labels": {"topology.kubernetes.io/zone": "", "failure-domain.beta.kubernetes.io/zone": "us-east-1b"}}},
+		],
+		[_pod("web-1", "app", "web", "n1"), _pod("web-2", "app", "web", "n2")],
+		[main],
+	)}
 	fixture := _input(main, _subject("prod", "app", "web", "web"), clusters, {"expected_azs": ["us-east-1a", "us-east-1b"]})
 
 	violations := k8s_az_coverage.violation with input as fixture
@@ -434,12 +383,14 @@ test_legacy_label_fallback_when_current_zone_label_is_empty if {
 test_multi_cluster_global_coverage if {
 	main := _deployment("web", "app", "web")
 	clusters := {
-		"prod-east": _cluster("prod-east", "us-east-1",
+		"prod-east": _cluster(
+			"prod-east", "us-east-1",
 			[_node("n1", "us-east-1a")],
 			[_pod("web-1", "app", "web", "n1")],
 			[main],
 		),
-		"prod-west": _cluster("prod-west", "us-west-2",
+		"prod-west": _cluster(
+			"prod-west", "us-west-2",
 			[_node("n2", "us-east-1b")],
 			[_pod("web-2", "app", "web", "n2")],
 			[_deployment("web", "app", "web")],
@@ -454,12 +405,14 @@ test_multi_cluster_global_coverage if {
 test_min_regions_and_expected_regions_use_cross_cluster_coverage if {
 	main := _deployment("web", "app", "web")
 	clusters := {
-		"east": _cluster("east", "us-east-1",
+		"east": _cluster(
+			"east", "us-east-1",
 			[_node("n1", "us-east-1a")],
 			[_pod("web-1", "app", "web", "n1")],
 			[main],
 		),
-		"west": _cluster("west", "us-west-2",
+		"west": _cluster(
+			"west", "us-west-2",
 			[_node("n2", "us-west-2a")],
 			[_pod("web-2", "app", "web", "n2")],
 			[_deployment("web", "app", "web")],
@@ -473,13 +426,12 @@ test_min_regions_and_expected_regions_use_cross_cluster_coverage if {
 
 test_expected_regions_not_met if {
 	main := _deployment("web", "app", "web")
-	clusters := {
-		"east": _cluster("east", "us-east-1",
-			[_node("n1", "us-east-1a")],
-			[_pod("web-1", "app", "web", "n1")],
-			[main],
-		),
-	}
+	clusters := {"east": _cluster(
+		"east", "us-east-1",
+		[_node("n1", "us-east-1a")],
+		[_pod("web-1", "app", "web", "n1")],
+		[main],
+	)}
 	fixture := _input(main, _subject("east", "app", "web", "web"), clusters, {"expected_regions": ["us-east-1", "eu-west-1"]})
 
 	violations := k8s_az_coverage.violation with input as fixture
@@ -492,12 +444,14 @@ test_expected_regions_not_met if {
 test_min_regions_falls_back_to_node_region_labels if {
 	main := _deployment("web", "app", "web")
 	clusters := {
-		"east": _cluster("east", "",
+		"east": _cluster(
+			"east", "",
 			[_node_with_region("n1", "us-east-1a", "us-east-1")],
 			[_pod("web-1", "app", "web", "n1")],
 			[main],
 		),
-		"west": _cluster("west", "",
+		"west": _cluster(
+			"west", "",
 			[_node_with_region("n2", "us-west-2a", "us-west-2")],
 			[_pod("web-2", "app", "web", "n2")],
 			[_deployment("web", "app", "web")],
@@ -511,19 +465,18 @@ test_min_regions_falls_back_to_node_region_labels if {
 
 test_conflicting_node_region_labels_do_not_satisfy_min_regions if {
 	main := _deployment("web", "app", "web")
-	clusters := {
-		"mixed": _cluster("mixed", "",
-			[
-				_node_with_region("n1", "us-east-1a", "us-east-1"),
-				_node_with_region("n2", "us-east-1b", "us-west-2"),
-			],
-			[
-				_pod("web-1", "app", "web", "n1"),
-				_pod("web-2", "app", "web", "n2"),
-			],
-			[main],
-		),
-	}
+	clusters := {"mixed": _cluster(
+		"mixed", "",
+		[
+			_node_with_region("n1", "us-east-1a", "us-east-1"),
+			_node_with_region("n2", "us-east-1b", "us-west-2"),
+		],
+		[
+			_pod("web-1", "app", "web", "n1"),
+			_pod("web-2", "app", "web", "n2"),
+		],
+		[main],
+	)}
 	fixture := _input(main, _subject("mixed", "app", "web", "web"), clusters, {"min_regions": 1})
 
 	raw_violations := k8s_az_coverage.violation with input as fixture
@@ -539,12 +492,14 @@ test_conflicting_node_region_labels_do_not_satisfy_min_regions if {
 test_failure_messages_include_observed_az_and_region_counts if {
 	main := _deployment("web", "app", "web")
 	clusters := {
-		"kind-a": _cluster("kind-a", "local",
+		"kind-a": _cluster(
+			"kind-a", "local",
 			[_node("n1", "local-a")],
 			[_pod("web-1", "app", "web", "n1"), _pod("web-2", "app", "web", "n1")],
 			[main],
 		),
-		"kind-b": _cluster("kind-b", "local",
+		"kind-b": _cluster(
+			"kind-b", "local",
 			[_node("n2", "local-b")],
 			[_pod("web-3", "app", "web", "n2")],
 			[_deployment("web", "app", "web")],
@@ -569,13 +524,12 @@ test_failure_messages_include_observed_az_and_region_counts if {
 
 test_subject_identity_label_fallback_if_main_is_missing_metadata_label if {
 	main := {"metadata": {"name": "web", "namespace": "app"}}
-	clusters := {
-		"prod": _cluster("prod", "us-east-1",
-			[_node("n1", "us-east-1a"), _node("n2", "us-east-1b")],
-			[_pod("web-1", "app", "web", "n1"), _pod("web-2", "app", "web", "n2")],
-			[main],
-		),
-	}
+	clusters := {"prod": _cluster(
+		"prod", "us-east-1",
+		[_node("n1", "us-east-1a"), _node("n2", "us-east-1b")],
+		[_pod("web-1", "app", "web", "n1"), _pod("web-2", "app", "web", "n2")],
+		[main],
+	)}
 	fixture := _input(main, _subject("prod", "app", "web", "web"), clusters, {"expected_azs": ["us-east-1a", "us-east-1b"]})
 
 	violations := k8s_az_coverage.violation with input as fixture
@@ -584,13 +538,12 @@ test_subject_identity_label_fallback_if_main_is_missing_metadata_label if {
 
 test_main_deployment_template_label_is_used if {
 	main := _deployment_template_only("web", "app", "web")
-	clusters := {
-		"prod": _cluster("prod", "us-east-1",
-			[_node("n1", "us-east-1a"), _node("n2", "us-east-1b")],
-			[_pod("web-1", "app", "web", "n1"), _pod("web-2", "app", "web", "n2")],
-			[main],
-		),
-	}
+	clusters := {"prod": _cluster(
+		"prod", "us-east-1",
+		[_node("n1", "us-east-1a"), _node("n2", "us-east-1b")],
+		[_pod("web-1", "app", "web", "n1"), _pod("web-2", "app", "web", "n2")],
+		[main],
+	)}
 	fixture := _input(main, _subject("prod", "app", "web", "web"), clusters, {"expected_azs": ["us-east-1a", "us-east-1b"]})
 
 	violations := k8s_az_coverage.violation with input as fixture
@@ -599,9 +552,7 @@ test_main_deployment_template_label_is_used if {
 
 test_no_compliance_criteria if {
 	main := _deployment("web", "app", "web")
-	clusters := {
-		"prod": _cluster("prod", "us-east-1", [_node("n1", "us-east-1a")], [_pod("web-1", "app", "web", "n1")], [main]),
-	}
+	clusters := {"prod": _cluster("prod", "us-east-1", [_node("n1", "us-east-1a")], [_pod("web-1", "app", "web", "n1")], [main])}
 	fixture := _input(main, _subject("prod", "app", "web", "web"), clusters, {})
 
 	violations := k8s_az_coverage.violation with input as fixture
@@ -649,9 +600,7 @@ test_risk_templates if {
 
 test_description_with_clusters if {
 	main := _deployment("web", "app", "web")
-	clusters := {
-		"prod": _cluster("prod", "us-east-1", [], [], [main]),
-	}
+	clusters := {"prod": _cluster("prod", "us-east-1", [], [], [main])}
 	fixture := _input(main, _subject("prod", "app", "web", "web"), clusters, {"expected_azs": ["us-east-1a"]})
 
 	d := k8s_az_coverage.description with input as fixture
