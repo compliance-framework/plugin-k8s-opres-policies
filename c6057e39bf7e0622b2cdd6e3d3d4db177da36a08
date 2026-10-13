@@ -1,0 +1,2 @@
+lisa-selfreview:
+Pass 1 (ccf-review packs core, rego-policy): approve, no findings. Diff is pure opa fmt 1.14.1 output (verified: opa fmt of origin/main files == HEAD files) plus the workflow swap. Rego rules (METADATA, risk links, tests) only touch pre-existing code; listed as pre-existing in the PR body, not changed (fix errors only).
