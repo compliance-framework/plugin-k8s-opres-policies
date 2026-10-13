@@ -1,0 +1,2 @@
+lisa-selfreview:
+Self-review pass 1 (strict): no findings. Every added/changed file is byte-identical to the reviewed reference PR compliance-framework/plugin-file-attestation-policies#4 head (callers, config, manifest at 0.2.0; ci.yml already at v1.5.2 on main so untouched). Config top-level keys match workflows release-please/defaults.json at v1.5.2. actionlint v1.7.12 clean; OPA 1.14.1 build/check/test (27/27) pass; old and shared bundle commands give byte-identical tarballs (sha256 2b20fac8...).
